@@ -1,5 +1,5 @@
 USTH Deep Learning 2025
 ==========================
 
-* Your name here
+* NGUYEN Thien An
 * YOUR ID HERE IF YOU ARE DAT

@@ -25,7 +25,7 @@ if __name__ == "__main__":
         f=f_x_squared,
         x_0=10.0,
         h=0.001,
-        L=1,
+        L=1.2,
         max_iterations=3
     )
 
@@ -61,20 +61,26 @@ if __name__ == "__main__":
     plt.grid(True)
 
     # Plot the function f(x) = x^2 with values of x dotted using x_s with visualization of how x_s changes as lines 
-    x = [i for i in range(-100, 100)]
+    x = [i for i in range(-50, 51)]
     y = [f_x_squared(i) for i in x]
     plt.subplot(3, 1, 3)
     plt.plot(x, y)
-    plt.scatter(x_s, [f_x_squared(i) for i in x_s], color='red', label='x_s values')
+
+    plt.scatter(x_s[0], f_x_squared(x_s[0]), color='red', label='Start')
+
+    for i in range(1, len(x_s)):
+        plt.scatter(x_s[i], f_x_squared(x_s[i]), color='blue')
+
     for i in range(len(x_s)-1):
-        plt.plot([x_s[i], x_s[i+1]], [f_x_squared(x_s[i]), f_x_squared(x_s[i+1])], linestyle='--', color='gray')
+        plt.plot([x_s[i], x_s[i+1]], 
+                [f_x_squared(x_s[i]), f_x_squared(x_s[i+1])], 
+                linestyle='--', color='gray')
 
     plt.title("Gradient Descent (Function Plot)")
     plt.xlabel("x")
     plt.ylabel("f(x)")
-    plt.legend()
     plt.grid(True)
     plt.tight_layout()
+    plt.savefig("gradient_descent_lr(1.2).png")
     plt.show()
-    plt.savefig("gradient_descent_lr(0).png")
 

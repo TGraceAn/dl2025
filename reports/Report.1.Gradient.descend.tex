@@ -51,27 +51,27 @@ My code takes the following inputs:
 \section{Experiments}
 We will use the $f(x) = x^2$ function for the experiment and experiment with the learning rate of 0.1, 0.3, and 1.2, with the initial x value of 10.
 
-\begin{figure}[ht!]
+\begin{figure}[ht]
   \centering
   \includegraphics[width=1\textwidth]{images/lab1/gradient_descent_lr(0.1).png}
   \caption{Gradient Descent with Learning Rate 0.1}
   \label{fig:lr_0.1}
 \end{figure}
 
-\begin{figure}[ht!]
+\begin{figure}[ht]
   \centering
   \includegraphics[width=1\textwidth]{images/lab1/gradient_descent_lr(0.3).png}
   \caption{Gradient Descent with Learning Rate 0.3}
   \label{fig:lr_0.3}
 \end{figure}
 
-\begin{figure}[ht!]
+\begin{figure}[ht]
   \centering
   \includegraphics[width=1\textwidth]{images/lab1/gradient_descent_lr(1.2).png}
   \caption{Gradient Descent with Learning Rate 1.2}
   \label{fig:lr_1.2}
 \end{figure}
-
+\newpage
 \noindent Here, the red dot visualizes the position after step 1. We can see that Gradient Descent depends a lot learning rate. In the case of a learning rate of 0.1, it converges, but it is a bit slow compared with a learning rate of 0.3. For a learning rate of 1.2, it diverges since it took too big of a step towards the minimum.\\
 \noindent The gradient also decreased when the value is closer towards the minimum for the case of 0.1 and 0.3, but for 1,2 the gradient becomes larger cause of the divergence. At the eendnd x converges around 0.
 

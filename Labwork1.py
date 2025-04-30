@@ -11,7 +11,7 @@ def gradient_descent(f, x_0, h, L, max_iterations, threshold = 1e-6):
         x_s.append(x_a)
         print(f"Step {i + 1}: x = {x_a:.6f} | f(x) = {f(x_a):.2f}")
 
-        if abs(f(x_a) - f(x_0)) < threshold:
+        if f(x_a) - f(x_0) < threshold:
             break
         x_0 = x_a
 
@@ -25,8 +25,8 @@ if __name__ == "__main__":
         f=f_x_squared,
         x_0=10.0,
         h=0.001,
-        L=3,
-        max_iterations=10
+        L=1,
+        max_iterations=3
     )
 
     # plt.plot(x_s)
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     plt.grid(True)
 
     # Plot the function f(x) = x^2 with values of x dotted using x_s with visualization of how x_s changes as lines 
-    x = [i for i in range(-10, 11)]
+    x = [i for i in range(-100, 100)]
     y = [f_x_squared(i) for i in x]
     plt.subplot(3, 1, 3)
     plt.plot(x, y)

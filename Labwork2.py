@@ -72,8 +72,12 @@ def linear_regression_2(x, y, F, lr, iter, threshold):
         # calculate gradient
         W_0_h = [W[0] + 1e-5, W[1]]
         W_1_h = [W[0], W[1] + 1e-5]
-        J_w0 = (F(x, y, W_0_h) - loss) / 1e-5
-        J_w1 = (F(x, y, W_1_h) - loss) / 1e-5
+
+        W_0_h_ = [W[0] - 1e-5, W[1]]
+        W_0_h_ = [W[0], W[1] - 1e-5]
+
+        J_w0 = (F(x, y, W_0_h) - F(x, y, W_0_h_)) / 2e-5
+        J_w1 = (F(x, y, W_1_h) - F(x, y, W_0_h_)) / 2e-5
 
         # update the weights
         W[0] = W[0] - lr * J_w0

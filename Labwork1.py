@@ -4,13 +4,13 @@ def gradient_descent(f, x_0, h, L, max_iterations, threshold = 1e-6):
     fx = []
     x_s = []
     for i in range(max_iterations):
-        derivative = (f(x_0 + h) - f(x_0)) / h
+        derivative = (f(x_0 + h) - f(x_0 - h)) / (2*h)
         x_a = x_0 - L * derivative
         fx.append(f(x_a))
         x_s.append(x_a)
         print(f"Step {i + 1}: x = {x_a:.6f} | f(x) = {f(x_a):.2f}")
 
-        if abs(x_a - x_0) < threshold:
+        if abs(f(x_a) - f(x_0)) < threshold:
             break
         x_0 = x_a
 

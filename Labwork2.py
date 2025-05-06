@@ -13,9 +13,6 @@ def linear_regression(x, y, F, lr, iter, threshold):
     print(f"Initial weights: {W}")
 
     for i in range(iter):
-        # check if loss is less than threshold
-        if loss < threshold:
-            break
         # calculate gradient
         J_w0 = F_w0(x, y, W)
         J_w1 = F_w1(x, y, W)
@@ -27,6 +24,11 @@ def linear_regression(x, y, F, lr, iter, threshold):
         # calculate loss
         loss = F(x, y, W)
         loss_list.append(loss)
+
+        # check if loss update is less than threshold
+        if abs(loss_list[-1]-loss_list[-2]) < threshold:
+            break
+
         weights_states.append(W[:])
     
     return W, loss_list, weights_states
@@ -66,9 +68,6 @@ def linear_regression_2(x, y, F, lr, iter, threshold):
     print(f"Initial weights: {W}")
 
     for i in range(iter):
-        # check if loss is less than threshold
-        if loss < threshold:
-            break
         # calculate gradient
         W_0_h = [W[0] + 1e-5, W[1]]
         W_1_h = [W[0], W[1] + 1e-5]
@@ -86,6 +85,11 @@ def linear_regression_2(x, y, F, lr, iter, threshold):
         # calculate loss
         loss = F(x, y, W)
         loss_list.append(loss)
+
+        # check if loss update is less than threshold
+        if abs(loss_list[-1]-loss_list[-2]) < threshold:
+            break
+
         weights_states.append(W[:])
         
     return W, loss_list, weights_states

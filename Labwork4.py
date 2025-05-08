@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 
 class ModelConfig:
     n_layers = 4
-    layers_size = [2, 3, 3, 5]
+    layers_size = [2, 3, 3, 5] # first is input, later are hidden
     n_class = 2
 
 # Random #
@@ -53,11 +53,11 @@ class Node:
             Output of a single node
         """
         act = self.act
-        sum = 0
+        total = 0
         for i in range(len(x)):
-            sum += x[i]*self.weights[i]
-        sum += self.bias
-        out = act(sum)
+            total += x[i] * self.weights[i]
+        total += self.bias
+        out = act(total)
         return out
 
     def act(self, x):
@@ -142,4 +142,3 @@ if __name__ == "__main__":
     print(len(fnn))
     x = [1, 1]
     print(fnn.forward(x))
-        

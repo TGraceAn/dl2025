@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 
+
 class ModelConfig:
     n_layers = 4
     layers_size = [2, 3, 3, 5] # first is input, later are hidden
@@ -63,6 +64,7 @@ class Node:
     def act(self, x):
         return 1/(1+e()**(-x)) 
     
+
 class Layer:
     def __init__(self, n_in: int, n_out: int):
         """
@@ -85,9 +87,9 @@ class Layer:
 
         return out
 
-
     def __len__(self):
         return len(self.__nodes)
+
 
 class FNN:
     def __init__(self, n: int, s: list, n_class = 2):

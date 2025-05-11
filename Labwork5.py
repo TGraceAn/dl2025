@@ -113,8 +113,8 @@ class BinaryCrossEntropy:
 # ----------- #
 class Node:
     def __init__(self, n: int):
-        self.__bias = rng.uniform(0,1)
-        self.__weights = [rng.uniform(0,1) for i in range(n)]
+        self.__bias = rng.uniform(-0.5,0.5)
+        self.__weights = [rng.uniform(-0.5,0.5) for i in range(n)]
         self.__F = Sigmoid()
         self.__last_x = None
         self.__last_z = None
@@ -131,11 +131,10 @@ class Node:
         self.__last_a = self.act(self.__last_z)
         return self.__last_a
 
-    def backward(self, target: int, loss_f):
+    def backward(self, target: int):
         """
         Args: 
             target (int): target value (or dL_da)
-            loss_f: loss function
         Return:
             Gradient for each of the weight
         """
@@ -187,17 +186,16 @@ class Layer:
     def __len__(self):
         return len(self.__nodes)
     
-    def backward(self, targets: list, loss_f):
+    def backward(self, targets: list):
         """
         Args: 
             target (list): list of target value (dL_das)
-            loss_f: loss function
         Return:
             Every grads for each node
         """
         grad_inputs_all = []
         for node, dL_da in zip(self.__nodes, targets):
-            grad_w, grad_b, grad_inputs = node.backward(dL_da, loss_f)
+            grad_w, grad_b, grad_inputs = node.backward(dL_da)
             grad_inputs_all.append(grad_inputs)
         grad_inputs_sum = [sum(grads[i] for grads in grad_inputs_all) for i in range(len(grad_inputs_all[0]))]
         return grad_inputs_sum
@@ -245,13 +243,13 @@ class FNN:
         out = self.__last_forward
         if self.__n_class == 2:
             dL_da = loss_f.grad(target, out)
-            grad_inputs = self.__out.backward([dL_da], loss_f)
+            grad_inputs = self.__out.backward([dL_da])
         else:
             dL_das = [loss_f.grad(t, p) for t, p in zip(target, out)]
-            grad_inputs = self.__out.backward(dL_das, loss_f)
+            grad_inputs = self.__out.backward(dL_das)
         
         for layer in reversed(self.__layers):
-            grad_inputs = layer.backward(grad_inputs, loss_f)
+            grad_inputs = layer.backward(grad_inputs)
 
     def step(self, lr):
         for layer in self.__layers:
@@ -269,30 +267,42 @@ if __name__ == "__main__":
     print(f"Number of layers: {len(fnn)}")
 
     # XOR problem
-    x = [[0, 0], [0, 1], [1, 0], [1, 1]]
-    y = [0, 1, 1, 0]  # target
+    x = [[0, 0],
+         [0, 1], 
+         [1, 0], 
+         [1, 1]]
+    
+    y = [0, 
+         1, 
+         1, 
+         0]  # target
 
-    # Training
+    # Training with batch gradient descent
     loss_f = BinaryCrossEntropy()
-    epochs = 1000
+    epochs = 1000*2
     lr = 0.1
     loss_history = []
 
     for epoch in range(epochs):
         total_loss = 0
-        fnn.zero_grad()
+        fnn.zero_grad()  # Reset gradients at the start of each epoch
         for xi, yi in zip(x, y):
             out = fnn.forward(xi)
             loss = loss_f.calLoss(yi, out)
             total_loss += loss
-            fnn.backward(yi, loss_f)
-        fnn.step(lr)
+            fnn.backward(yi, loss_f)  # Accumulate gradients for the batch
+        fnn.step(lr)  # Update weights once per epoch
         avg_loss = total_loss / len(x)
         loss_history.append(avg_loss)
         if epoch % 100 == 0:
             print(f"Epoch {epoch}, Loss: {avg_loss:.6f}")
 
     print("Training complete.")
+
+    print(fnn.forward([0, 0]))  # Should be close to 0
+    print(fnn.forward([0, 1]))  # Should be close to 1
+    print(fnn.forward([1, 0]))  # Should be close to 1
+    print(fnn.forward([1, 1]))  # Should be close to 0
 
     # Plot loss history
     plt.figure(figsize=(8, 6))

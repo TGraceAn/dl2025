@@ -53,7 +53,7 @@ class Sigmoid(ActFunction):
         return self.__value
     
     def calGrad(self):
-        if self.__value == None:
+        if self.__value is None:
             return "calValue must be called first"
         self.__grad = self.__value * (1 - self.__value)
         return self.__grad
@@ -109,38 +109,23 @@ class BinaryCrossEntropy:
         return -(target / pred) + (1 - target) / (1 - pred) # formula, duh
     
 
+
 # ----------- #
 class Node:
     def __init__(self, n: int):
-        """
-        Arg:
-            n (int): number of input feature
-        """
         self.__bias = rng.uniform(0,1)
         self.__weights = [rng.uniform(0,1) for i in range(n)]
         self.__F = Sigmoid()
-
-        # cache for efficient in backward
         self.__last_x = None
         self.__last_z = None
         self.__last_a = None
-
         self.__grad_weights = [0] * len(self.__weights)
         self.__grad_bias = 0
-
-        # self.__weight_history = []
-        # self.__bias_history = []
 
     def act(self, x):
         return self.__F.calValue(x)
 
     def forward(self, x):
-        """
-        Arg:
-            x (list): Input features
-        Return:
-            Output of a single node
-        """
         self.__last_x = x
         self.__last_z = sum(xi * wi for xi, wi in zip(x, self.__weights)) + self.__bias
         self.__last_a = self.act(self.__last_z)
@@ -154,6 +139,7 @@ class Node:
         Return:
             Gradient for each of the weight
         """
+
         da_dz = self.__F.calGrad()
         dL_dz = target * da_dz
         grad_weights = [dL_dz * xi for xi in self.__last_x]
@@ -163,12 +149,12 @@ class Node:
         self.__grad_bias += grad_bias
         grad_inputs = [dL_dz * w for w in self.__weights]
         return grad_weights, grad_bias, grad_inputs
-    
+
     def step(self, lr):
         # self.__weight_history.append(self.__weights.copy())
         # self.__bias_history.append(self.__bias)
 
-        self.__bias = self.__bias - lr * self.__grad_bias
+        self.__bias -= lr * self.__grad_bias
         self.__weights = [(weight - lr * grad_weight) for weight, grad_weight in zip(self.__weights, self.__grad_weights)]
 
     def zero_grad(self):
@@ -196,11 +182,7 @@ class Layer:
         Return:
             Output from all the nodes
         """
-        out = []
-        for node in self.__nodes:
-            out.append(node.forward(x))
-
-        return out
+        return [node.forward(x) for node in self.__nodes]
 
     def __len__(self):
         return len(self.__nodes)
@@ -219,7 +201,7 @@ class Layer:
             grad_inputs_all.append(grad_inputs)
         grad_inputs_sum = [sum(grads[i] for grads in grad_inputs_all) for i in range(len(grad_inputs_all[0]))]
         return grad_inputs_sum
-    
+
     def step(self, lr):
         for node in self.__nodes:
             node.step(lr)
@@ -229,49 +211,38 @@ class Layer:
             node.zero_grad()
 
 class FNN:
-    def __init__(self, n: int, s: list, n_class = 2):
-        """
-        Arg:
-            n (int): number of Hidden Layers
-            s (list): the number of node(s) in each layer
-            n_class (int): number of class to classify
-        """
+    def __init__(self, n: int, s: list, n_class=2):
         self.__n_class = n_class
-
         if self.__n_class < 2:
             print("This is dumb")
             print("Nothing initialized")
-        else:
-            print(f"Init a model with {n} Hidden Layers")
-            self.__layers = [Layer(s[i], s[i+1]) for i in range(n-1)]
-            self.__out = Layer(s[-1], 1 if n_class == 2 else n_class)
-            # tbh the last layer should be softmax smth for multiple classes but this here for convention for now
-
+            return
+        print(f"Init a model with {n} Hidden Layers")
+        self.__layers = [Layer(s[i], s[i+1]) for i in range(n-1)]
+        self.__out = Layer(s[-1], 1 if n_class == 2 else n_class)
         self.__last_x = None
+        self.__last_forward = None
 
     def forward(self, x):
         """
         Return: 
             Return the output
         """
+        self.__last_x = x
         for layer in self.__layers:
             x = layer.forward(x)
-
-        if self.__n_class == 2:
-            out = self.__out.forward(x)
-            return out
-        else:
-            x = self.__out.forward(x)
-            # nomalization
-            total = sum(x)
-            out = [value/total for value in x]
-            return out
+        out = self.__out.forward(x)
+        if self.__n_class > 2:
+            total = sum(out)
+            out = [value/total for value in out]
+        self.__last_forward = out
+        return out
 
     def __len__(self):
-        return len(self.__layers) + 1 # return value of layers
-    
+        return len(self.__layers) + 1
+
     def backward(self, target, loss_f):
-        out = self.forward(self.__last_x)
+        out = self.__last_forward
         if self.__n_class == 2:
             dL_da = loss_f.grad(target, out)
             grad_inputs = self.__out.backward([dL_da], loss_f)
@@ -331,5 +302,3 @@ if __name__ == "__main__":
     plt.ylabel('Loss')
     plt.grid(True)
     plt.savefig('loss_history.png')
-
-

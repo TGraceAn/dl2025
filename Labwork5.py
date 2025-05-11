@@ -218,7 +218,6 @@ class FNN:
         print(f"Init a model with {n} Hidden Layers")
         self.__layers = [Layer(s[i], s[i+1]) for i in range(n-1)]
         self.__out = Layer(s[-1], 1 if n_class == 2 else n_class)
-        self.__last_x = None
         self.__last_forward = None
 
     def forward(self, x):
@@ -226,7 +225,6 @@ class FNN:
         Return: 
             Return the output
         """
-        self.__last_x = x
         for layer in self.__layers:
             x = layer.forward(x)
         out = self.__out.forward(x)

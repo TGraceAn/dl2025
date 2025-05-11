@@ -93,18 +93,18 @@ def log(x, terms=10):
 class BinaryCrossEntropy:
     def calLoss(self, target, pred):
         if isinstance(pred, list):
-            pred = pred[0]
+            pred = pred[0] # taking the value only
         if isinstance(target, list):
-            target = target[0]
+            target = target[0] # taking the value only
         pred = min(max(pred, 1e-15), 1 - 1e-15)
         J = target * log(pred) + (1 - target) * log(1 - pred)
         return -J
 
     def grad(self, target, pred):
         if isinstance(pred, list):
-            pred = pred[0]
+            pred = pred[0] # taking the value only
         if isinstance(target, list):
-            target = target[0]
+            target = target[0] # taking the value only
         pred = min(max(pred, 1e-15), 1 - 1e-15)
         return -(target / pred) + (1 - target) / (1 - pred) # formula, duh
     
@@ -195,7 +195,7 @@ class Layer:
         """
         grad_inputs_all = []
         for node, dL_da in zip(self.__nodes, targets):
-            grad_w, grad_b, grad_inputs = node.backward(dL_da)
+            _, _, grad_inputs = node.backward(dL_da) # only need the grad_inputs
             grad_inputs_all.append(grad_inputs)
         grad_inputs_sum = [sum(grads[i] for grads in grad_inputs_all) for i in range(len(grad_inputs_all[0]))]
         return grad_inputs_sum

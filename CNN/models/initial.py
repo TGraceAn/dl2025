@@ -7,7 +7,7 @@ import math
 """Initial stuff for CNN"""
 
 # Module (model, layer, etc) #
-class Module:
+class Module(ABC):
     """Interface for all modules"""
 
     @abstractmethod
@@ -32,7 +32,7 @@ class Module:
 
 
 # Optimizer stuff #
-class Optimizer:
+class Optimizer(ABC):
     """Optimizer for the module"""
 
     @abstractmethod
@@ -53,8 +53,9 @@ class Optimizer:
         
 
 # Activation Functions #
-class ActFunction:
+class ActFunction(ABC):
     """Interface for Activation Functions"""
+    @abstractmethod
     def __init__(self):
         """Initialize the activation function"""
 
@@ -104,7 +105,7 @@ class Relu(ActFunction):
         return self.__grad
     
 # Loss #
-class Loss:
+class Loss(ABC):
     """Interface for Loss Functions"""
     @abstractmethod
     def calLoss(self, target, pred):

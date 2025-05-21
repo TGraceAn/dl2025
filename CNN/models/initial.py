@@ -31,6 +31,67 @@ class Module(ABC):
         """Zero the gradients"""
 
 
+class Convol(Module):
+    """Convolutional layer"""
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+
+    def forward(self, x):
+        pass
+
+    def backward(self, x):
+        pass
+
+    def step(self, lr):
+        pass
+
+    def zero_grad(self):
+        pass
+
+
+class MaxPooling(Module):
+    """Max pooling layer"""
+    def __init__(self, kernel_size: int, stride: int):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride
+
+    def forward(self, x):
+        pass
+
+    def backward(self, x):
+        pass
+
+    def step(self, lr):
+        pass
+
+    def zero_grad(self):
+        pass
+
+
+class Dense(Module):
+    """Dense layer"""
+    def __init__(self, in_features: int, out_features: int):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+
+    def forward(self, x):
+        pass
+
+    def backward(self, x):
+        pass
+
+    def step(self, lr):
+        pass
+
+    def zero_grad(self):
+        pass
+
+
 # Optimizer stuff #
 class Optimizer(ABC):
     """Optimizer for the module"""
@@ -135,3 +196,49 @@ class BinaryCrossEntropy(Loss):
             target = target[0] # taking the value only
         pred = min(max(pred, 1e-15), 1 - 1e-15)
         return -(target / pred) + (1 - target) / (1 - pred) # formula, duh
+    
+# Previous Node class from labwork5 now's gonna be Tensor #
+class Tensor:
+    """Tensor class"""
+    def __init__(self, data, requires_grad=True):
+        self.data = data if isinstance(data, list) else [data]
+        self.requires_grad = requires_grad
+        self.grad = None
+
+    def __getitem__(self, index):
+        return self.Tensor(self.data[index])
+    
+    @property
+    def get_value(self):
+        return self.data[0] if len(self.data) == 1 else self.data
+
+    ## Operators for tensor operations ## 
+    def __add__(self, other):
+        if isinstance(other, Tensor):
+            return Tensor([x + y for x, y in zip(self.data, other.data)])
+        else:
+            return Tensor([x + other for x in self.data])
+        
+    def __sub__(self, other):
+        if isinstance(other, Tensor):
+            return Tensor([x - y for x, y in zip(self.data, other.data)])
+        else:
+            return Tensor([x - other for x in self.data])
+        
+    def __mul__(self, other):
+        if isinstance(other, Tensor):
+            return Tensor([x * y for x, y in zip(self.data, other.data)])
+        else:
+            return Tensor([x * other for x in self.data])
+        
+    def __truediv__(self, other):
+        if isinstance(other, Tensor):
+            return Tensor([x / y for x, y in zip(self.data, other.data)])
+        else:
+            return Tensor([x / other for x in self.data])
+        
+    def __pow__(self, other):
+        if isinstance(other, Tensor):
+            return Tensor([x ** y for x, y in zip(self.data, other.data)])
+        else:
+            return Tensor([x ** other for x in self.data])

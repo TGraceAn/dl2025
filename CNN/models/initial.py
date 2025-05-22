@@ -206,9 +206,9 @@ class Tensor:
         self.grad = None
 
     def __getitem__(self, index):
-        return self.Tensor(self.data[index])
+        value = self.data[index]
+        return Tensor(value) if not isinstance(value, list) else Tensor(value)
     
-    @property
     def get_value(self):
         return self.data[0] if len(self.data) == 1 else self.data
 
@@ -243,4 +243,17 @@ class Tensor:
         else:
             return Tensor([x ** other for x in self.data])
 
-###
+    def __repr__(self):
+        if not isinstance(self.data, list):
+            return f"tensor({self.data})"
+        if len(self.data) == 1 and not isinstance(self.data[0], list):
+            return f"tensor({self.data[0]})"
+        return f"tensor({self.data})"
+
+    def __iter__(self):
+        if not isinstance(self.data, list):
+            raise TypeError("Tensor object is not iterable")
+        if len(self.data) == 1 and not isinstance(self.data[0], list):
+            raise TypeError("Tensor object is not iterable")
+        for item in self.data:
+            yield Tensor(item)

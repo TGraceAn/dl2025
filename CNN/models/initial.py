@@ -259,15 +259,15 @@ class Tensor:
         
     def __rsub__(self, other):
         if isinstance(other, Tensor):
-            return other - self
+            return Tensor([y - x for x, y in zip(self.data, other.data)])
         else:
-            return other - self
+            return Tensor([other - x for x in self.data])    
         
     def __rtruediv__(self, other):
         if isinstance(other, Tensor):
-            return other / self
+            return Tensor([y / x for x, y in zip(self.data, other.data)])
         else:
-            return other / self
+            return Tensor([other / x for x in self.data])
 
     # representation of the Tensor
     def __repr__(self):

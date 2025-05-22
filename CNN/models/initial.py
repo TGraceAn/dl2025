@@ -242,3 +242,5 @@ class Tensor:
             return Tensor([x ** y for x, y in zip(self.data, other.data)])
         else:
             return Tensor([x ** other for x in self.data])
+
+###

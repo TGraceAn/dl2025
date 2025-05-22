@@ -208,9 +208,6 @@ class Tensor:
     def __getitem__(self, index):
         value = self.data[index]
         return Tensor(value) if not isinstance(value, list) else Tensor(value)
-    
-    def get_value(self):
-        return self.data[0] if len(self.data) == 1 else self.data
 
     ## Operators for tensor operations ## 
     def __add__(self, other):
@@ -242,18 +239,39 @@ class Tensor:
             return Tensor([x ** y for x, y in zip(self.data, other.data)])
         else:
             return Tensor([x ** other for x in self.data])
+        
+    def __neg__(self):
+        if not isinstance(self.data, list):
+            return Tensor(-self.data)
+        return Tensor([-x for x in self.data])
+    
+    def __radd__(self, other):
+        if isinstance(other, Tensor):
+            return self + other
+        else:
+            return self + other
+        
+    def __rmul__(self, other):
+        if isinstance(other, Tensor):
+            return self * other
+        else:
+            return self * other
 
+    # representation of the Tensor
     def __repr__(self):
         if not isinstance(self.data, list):
-            return f"tensor({self.data})"
+            return f"Tensor({self.data})"
         if len(self.data) == 1 and not isinstance(self.data[0], list):
-            return f"tensor({self.data[0]})"
-        return f"tensor({self.data})"
+            return f"Tensor({self.data[0]})"
+        return f"Tensor({self.data})"
 
     def __iter__(self):
         if not isinstance(self.data, list):
-            raise TypeError("Tensor object is not iterable")
+            raise TypeError("0-D Tensor is not iterable")
         if len(self.data) == 1 and not isinstance(self.data[0], list):
-            raise TypeError("Tensor object is not iterable")
+            raise TypeError("0-D Tensor is not iterable")
         for item in self.data:
             yield Tensor(item)
+        
+    def get_value(self):
+        return self.data[0] if len(self.data) == 1 else self.data

@@ -256,6 +256,18 @@ class Tensor:
             return self * other
         else:
             return self * other
+        
+    def __rsub__(self, other):
+        if isinstance(other, Tensor):
+            return other - self
+        else:
+            return other - self
+        
+    def __rtruediv__(self, other):
+        if isinstance(other, Tensor):
+            return other / self
+        else:
+            return other / self
 
     # representation of the Tensor
     def __repr__(self):

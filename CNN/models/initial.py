@@ -203,153 +203,13 @@ class Tensor:
     def __init__(self, data, requires_grad=True):
         self.data = data if isinstance(data, list) else [data]
         self.requires_grad = requires_grad
-        self.grad = None
+        self.grad = [0.0 for _ in self.data] if requires_grad else None
+        self._backward = lambda: None
+        self._prev = [] # Track previous tensors for backward pass
 
     def __getitem__(self, index):
         value = self.data[index]
         return Tensor(value) if not isinstance(value, list) else Tensor(value)
-
-    ## Operators for tensor operations ## 
-    def __add__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x + y for x, y in zip(self.data, other.data)])
-        else:
-            out = Tensor([x + other for x in self.data])
-        
-        def _backward():
-            if self.requires_grad:
-                self.grad += [1 for _ in self.data]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [1 for _ in other.data]
-
-        out.backward = _backward
-        return out
-        
-    def __sub__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x - y for x, y in zip(self.data, other.data)])
-        else:
-            out = Tensor([x - other for x in self.data])
-
-        def _backward():
-            if self.requires_grad:
-                self.grad += [1 for _ in self.data]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [-1 for _ in other.data]
-
-        out.backward = _backward
-        return out
-        
-    def __mul__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x * y for x, y in zip(self.data, other.data)])
-        else:
-            out = Tensor([x * other for x in self.data])
-
-        def _backward():
-            if self.requires_grad:
-                self.grad += [y for y in other.data]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [x for x in self.data]
-
-        out.backward = _backward
-        return out
-        
-    def __truediv__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x / y for x, y in zip(self.data, other.data)])
-        else:
-            out = Tensor([x / other for x in self.data])
-
-        def _backward():
-            if self.requires_grad:
-                self.grad += [1 / y for y in other.data]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [-x / (y ** 2) for x, y in zip(self.data, other.data)]
-
-        out.backward = _backward
-        return out
-        
-    def __pow__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x ** y for x, y in zip(self.data, other.data)])
-        else:
-            out = Tensor([x ** other for x in self.data])
-
-        def _backward():
-            if self.requires_grad:
-                self.grad += [other * (x ** (other - 1)) for x in self.data]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [math.log(x) * (x ** other) for x in self.data]
-
-        out.backward = _backward
-        return out
-        
-    def __neg__(self):
-        if not isinstance(self.data, list):
-            out = Tensor(-self.data)
-        else:
-            out = Tensor([-x for x in self.data])
-
-        def _backward():
-            if self.requires_grad:
-                self.grad += [-1 for _ in self.data]
-        out.backward = _backward
-        return out
-    
-    def __radd__(self, other):
-        if isinstance(other, Tensor):
-            out = self + other
-        else:
-            out = self + other
-        def _backward():
-            if self.requires_grad:
-                self.grad += [1 for _ in self.data]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [1 for _ in other.data]
-        out.backward = _backward
-        return out
-        
-    def __rmul__(self, other):
-        if isinstance(other, Tensor):
-            out = self * other
-        else:
-            out = self * other
-
-        def _backward():
-            if self.requires_grad:
-                self.grad += [y for y in other.data]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [x for x in self.data]
-        out.backward = _backward
-        return out
-        
-    def __rsub__(self, other):
-        if isinstance(other, Tensor):
-            out =  Tensor([y - x for x, y in zip(self.data, other.data)])
-        else:
-            out = Tensor([other - x for x in self.data])    
-
-        def _backward():
-            if self.requires_grad:
-                self.grad += [-1 for _ in self.data]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [1 for _ in other.data]
-        out.backward = _backward
-        return out
-        
-    def __rtruediv__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([y / x for x, y in zip(self.data, other.data)])
-        else:
-            out = Tensor([other / x for x in self.data])
-        def _backward():
-            if self.requires_grad:
-                self.grad += [-y / (x ** 2) for x, y in zip(self.data, other.data)]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [1 / x for x in self.data]
-        out.backward = _backward
-        return out
 
     # representation of the Tensor
     def __repr__(self):
@@ -375,3 +235,117 @@ class Tensor:
         # 1. Implement the backward pass
         # 2. Check logic for the backward pass of each operation
         ...
+
+    ## Operators for tensor operations ## 
+    def __add__(self, other):
+        if isinstance(other, Tensor):
+            out = Tensor([x + y for x, y in zip(self.data, other.data)],
+                         requires_grad=self.requires_grad or other.requires_grad)
+        else:
+            out = Tensor([x + other for x in self.data],
+                         requires_grad=self.requires_grad)
+
+        def _backward():
+            if self.requires_grad:
+                self.grad = [g + 1.0 for g in self.grad]
+            if isinstance(other, Tensor) and other.requires_grad:
+                other.grad = [g + 1.0 for g in other.grad]
+
+        out._backward = _backward
+        return out
+        
+    def __sub__(self, other):
+        if isinstance(other, Tensor):
+            out = Tensor([x - y for x, y in zip(self.data, other.data)], self.requires_grad or other.requires_grad)
+        else:
+            out = Tensor([x - other for x in self.data], self.requires_grad)
+
+        def _backward():
+            if self.requires_grad:
+                self.grad = [g + 1.0 for g in self.grad]
+            if isinstance(other, Tensor) and other.requires_grad:
+                other.grad = [g - 1.0 for g in other.grad]
+
+        out._backward = _backward
+        return out
+        
+    def __mul__(self, other):
+        if isinstance(other, Tensor):
+            out = Tensor([x * y for x, y in zip(self.data, other.data)], self.requires_grad or other.requires_grad)
+        else:
+            out = Tensor([x * other for x in self.data], self.requires_grad)
+
+        def _backward():
+            if self.requires_grad:
+                self.grad = [g + y for g, y in zip(self.grad, other.data)]
+            if isinstance(other, Tensor) and other.requires_grad:
+                other.grad = [g + x for g, x in zip(other.grad, self.data)]
+
+        out._backward = _backward
+        return out
+        
+    def __truediv__(self, other):
+        if isinstance(other, Tensor):
+            out = Tensor([x / y for x, y in zip(self.data, other.data)], self.requires_grad or other.requires_grad)
+        else:
+            out = Tensor([x / other for x in self.data], self.requires_grad)
+
+        def _backward():
+            if self.requires_grad:
+                self.grad = [g + 1 / y for g, y in zip(self.grad, other.data)]
+            if isinstance(other, Tensor) and other.requires_grad:
+                other.grad = [g - x / (y ** 2) for g, x, y in zip(other.grad, self.data, other.data)]
+
+        out._backward = _backward
+        return out
+        
+    def __pow__(self, other):
+        if isinstance(other, Tensor):
+            out = Tensor([x ** y for x, y in zip(self.data, other.data)], self.requires_grad or other.requires_grad)
+        else:
+            out = Tensor([x ** other for x in self.data], self.requires_grad)
+
+        def _backward():
+            if self.requires_grad:
+                self.grad = [g + other * (x ** (other - 1)) for g, x in zip(self.grad, self.data)]
+            if isinstance(other, Tensor) and other.requires_grad:
+                other.grad = [g + math.log(x) * (x ** y) for g, x, y in zip(other.grad, self.data, other.data)]
+
+        out._backward = _backward
+        return out
+        
+    def __neg__(self):
+        out = Tensor([-x for x in self.data], self.requires_grad)
+
+        def _backward():
+            if self.requires_grad:
+                self.grad = [g - 1.0 for g in self.grad]
+
+        out._backward = _backward
+        return out
+    
+    def __radd__(self, other):
+        if isinstance(other, Tensor):
+            out = self + other
+        else:
+            out = self + other
+        def _backward():
+            if self.requires_grad:
+                self.grad += [1 for _ in self.data]
+            if isinstance(other, Tensor) and other.requires_grad:
+                other.grad += [1 for _ in other.data]
+        out.backward = _backward
+        return out
+        
+    def __rmul__(self, other):
+        return self * other
+        
+    def __rsub__(self, other):
+        if isinstance(other, Tensor):
+            return other - self
+        return Tensor([other - x for x in self.data], self.requires_grad)
+        
+    def __rtruediv__(self, other):
+        if isinstance(other, Tensor):
+            return other / self
+        return Tensor([other / x for x in self.data], self.requires_grad)

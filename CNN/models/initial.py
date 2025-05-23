@@ -1,8 +1,9 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union, Callable, Optional, Set, Iterator
 import math
 
+Num = Union[int, float]
 
 """Initial stuff for CNN"""
 
@@ -200,26 +201,31 @@ class BinaryCrossEntropy(Loss):
 # Previous Node class from labwork5 now's gonna be Tensor #
 class Tensor:
     """Tensor class"""
-    def __init__(self, data, requires_grad=True):
-        self.data = data if isinstance(data, list) else [data]
-        self.requires_grad = requires_grad
-        self.grad = [0.0 for _ in self.data] if requires_grad else None
-        self._backward = lambda: None
-        self._prev = [] # Track previous tensors for backward pass
+    def __init__(self, data: Union[Num, List[Num]], requires_grad: bool=True):
+        """
+        Arg:
+            data (Union[Num, List[Num]]): Data to store
+            requires_grad (bool): If True, the tensor will track gradients
+        """
+    
+        self.data: Union[Num, List[Num]] = data
+        self.requires_grad: bool = requires_grad
+        self.grad: Optional[float] = 0.0 if requires_grad else None
+        self._backward: Callable[[], None] = lambda: None
+        self._prev: Set[Tensor] = set()
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Tensor:
         value = self.data[index]
         return Tensor(value) if not isinstance(value, list) else Tensor(value)
 
     # representation of the Tensor
-    def __repr__(self):
-        if not isinstance(self.data, list):
+    def __repr__(self) -> str:
+        if isinstance(self.data, list):
             return f"Tensor({self.data})"
-        if len(self.data) == 1 and not isinstance(self.data[0], list):
-            return f"Tensor({self.data[0]})"
-        return f"Tensor({self.data})"
+        else:
+            return f"Tensor({self.data})"
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Tensor]:
         if not isinstance(self.data, list):
             raise TypeError("0-D Tensor is not iterable")
         if len(self.data) == 1 and not isinstance(self.data[0], list):
@@ -227,125 +233,151 @@ class Tensor:
         for item in self.data:
             yield Tensor(item)
         
-    def get_value(self):
+    def get_value(self) -> Union[Num, List[Num]]:
         return self.data[0] if len(self.data) == 1 else self.data
     
     def backward(self):
-        # TODO: 
-        # 1. Implement the backward pass
-        # 2. Check logic for the backward pass of each operation
-        ...
+        """Compute gradients"""
+        if not self.requires_grad:
+            raise RuntimeError("Tensor does not require gradients") # TODO: Build try/except
+        
+        # Build topological order
+        topo = []
+        visited = set()
+
+        def build_topo(t):
+            if t not in visited:
+                visited.add(t)
+                for child in t._prev:
+                    build_topo(child)
+                topo.append(t)
+
+        build_topo(self)
+
+        self.grad = 1.0
+        
+        # Backpropagate
+        for node in reversed(topo):
+            node._backward()
 
     ## Operators for tensor operations ## 
-    def __add__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x + y for x, y in zip(self.data, other.data)],
-                         requires_grad=self.requires_grad or other.requires_grad)
-        else:
-            out = Tensor([x + other for x in self.data],
-                         requires_grad=self.requires_grad)
+    def __add__(self, other: Union[Num, Tensor]) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        
+        out = Tensor(self.data + other.data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
 
         def _backward():
             if self.requires_grad:
-                self.grad = [g + 1.0 for g in self.grad]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad = [g + 1.0 for g in other.grad]
-
+                self.grad += out.grad
+            if other.requires_grad:
+                other.grad += out.grad
+        
         out._backward = _backward
         return out
         
-    def __sub__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x - y for x, y in zip(self.data, other.data)], self.requires_grad or other.requires_grad)
-        else:
-            out = Tensor([x - other for x in self.data], self.requires_grad)
+    def __sub__(self, other: Union[Num, Tensor]) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        
+        out = Tensor(self.data - other.data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
 
         def _backward():
             if self.requires_grad:
-                self.grad = [g + 1.0 for g in self.grad]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad = [g - 1.0 for g in other.grad]
-
+                self.grad += out.grad
+            if other.requires_grad:
+                other.grad -= out.grad
+        
         out._backward = _backward
         return out
         
-    def __mul__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x * y for x, y in zip(self.data, other.data)], self.requires_grad or other.requires_grad)
-        else:
-            out = Tensor([x * other for x in self.data], self.requires_grad)
+    def __mul__(self, other: Union[Num, Tensor]) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        
+        out = Tensor(self.data * other.data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
 
         def _backward():
             if self.requires_grad:
-                self.grad = [g + y for g, y in zip(self.grad, other.data)]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad = [g + x for g, x in zip(other.grad, self.data)]
-
+                self.grad += other.data * out.grad
+            if other.requires_grad:
+                other.grad += self.data * out.grad
+        
         out._backward = _backward
         return out
         
-    def __truediv__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x / y for x, y in zip(self.data, other.data)], self.requires_grad or other.requires_grad)
-        else:
-            out = Tensor([x / other for x in self.data], self.requires_grad)
+    def __truediv__(self, other : Union[Num, Tensor]) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        
+        # Check for division by zero
+        if other.data == 0:
+            raise ZeroDivisionError("Division by zero in tensor operation")
+        
+        out = Tensor(self.data / other.data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
 
         def _backward():
             if self.requires_grad:
-                self.grad = [g + 1 / y for g, y in zip(self.grad, other.data)]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad = [g - x / (y ** 2) for g, x, y in zip(other.grad, self.data, other.data)]
+                self.grad += out.grad / other.data
+            if other.requires_grad:
+                other.grad -= out.grad * self.data / (other.data ** 2)
+        
+        out._backward = _backward
+        return out
 
+    def __pow__(self, other : Union[Num, Tensor]) -> Tensor:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        
+        # Check for problematic cases
+        if self.data == 0 and other.data < 0:
+            raise ZeroDivisionError("Cannot raise 0 to a negative power")
+        if self.data < 0 and not isinstance(other.data, int):
+            raise ValueError("Cannot raise negative number to non-integer power")
+        if self.data == 0 and other.data == 0:
+            raise ValueError("0^0 is undefined")
+        
+        out = Tensor(self.data ** other.data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            if self.requires_grad:
+                self.grad += out.grad * other.data * (self.data ** (other.data - 1))
+            if other.requires_grad:
+                # Only compute log gradient if self.data > 0
+                if self.data > 0:
+                    other.grad += out.grad * math.log(self.data) * (self.data ** other.data)
+                else:
+                    # For self.data <= 0, the log term is undefined; set gradient to 0
+                    other.grad += 0
+        
         out._backward = _backward
         return out
         
-    def __pow__(self, other):
-        if isinstance(other, Tensor):
-            out = Tensor([x ** y for x, y in zip(self.data, other.data)], self.requires_grad or other.requires_grad)
-        else:
-            out = Tensor([x ** other for x in self.data], self.requires_grad)
+    def __neg__(self) -> Tensor:
+        out = Tensor(-self.data, requires_grad=self.requires_grad)
+        out._prev = {self}
 
         def _backward():
             if self.requires_grad:
-                self.grad = [g + other * (x ** (other - 1)) for g, x in zip(self.grad, self.data)]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad = [g + math.log(x) * (x ** y) for g, x, y in zip(other.grad, self.data, other.data)]
-
-        out._backward = _backward
-        return out
+                self.grad -= out.grad
         
-    def __neg__(self):
-        out = Tensor([-x for x in self.data], self.requires_grad)
-
-        def _backward():
-            if self.requires_grad:
-                self.grad = [g - 1.0 for g in self.grad]
-
         out._backward = _backward
         return out
     
-    def __radd__(self, other):
-        if isinstance(other, Tensor):
-            out = self + other
-        else:
-            out = self + other
-        def _backward():
-            if self.requires_grad:
-                self.grad += [1 for _ in self.data]
-            if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += [1 for _ in other.data]
-        out.backward = _backward
-        return out
-        
-    def __rmul__(self, other):
+    def __radd__(self, other: Union[Num, Tensor]) -> Tensor:
+        return self + other
+
+    def __rsub__(self, other: Union[Num, Tensor]) -> Tensor:
+        return Tensor(other, requires_grad=False) - self
+
+    def __rmul__(self, other: Union[Num, Tensor]) -> Tensor:
         return self * other
-        
-    def __rsub__(self, other):
-        if isinstance(other, Tensor):
-            return other - self
-        return Tensor([other - x for x in self.data], self.requires_grad)
-        
-    def __rtruediv__(self, other):
-        if isinstance(other, Tensor):
-            return other / self
-        return Tensor([other / x for x in self.data], self.requires_grad)
+
+    def __rtruediv__(self, other: Union[Num, Tensor]) -> Tensor:
+        other_tensor = Tensor(other, requires_grad=False)
+        return other_tensor / self

@@ -100,59 +100,48 @@ class Convol2D(Module):
         Returns:
             Output tensor with shape (batch_size, out_channels, height_out, width_out)
         """
+        self.last_input = x
         batch_size, _, height, width = x.shape
-        height_out = (height + 2 * self.padding - self.kernel_size) // self.stride + 1
-        width_out = (width + 2 * self.padding - self.kernel_size) // self.stride + 1
-        
-        outputs = []
-        
-        # Bad code, improve later
+
+        if self.padding > 0:
+            x_padded = Tensor.zeros((batch_size, self.in_channels,
+                                     height + 2 * self.padding,
+                                     width + 2 * self.padding),
+                                    requires_grad=x.requires_grad)
+            for b in range(batch_size):
+                for c in range(self.in_channels):
+                    for i in range(height):
+                        for j in range(width):
+                            x_padded[b, c, i + self.padding, j + self.padding] = x[b, c, i, j]
+        else:
+            x_padded = x
+
+        padded_height = x_padded.shape[2]
+        padded_width = x_padded.shape[3]
+
+        height_out = (padded_height - self.kernel_size) // self.stride + 1
+        width_out = (padded_width - self.kernel_size) // self.stride + 1
+
+        output = Tensor.zeros((batch_size, self.out_channels, height_out, width_out), requires_grad=True)
+
         for b in range(batch_size):
-            batch_outputs = []
             for out_c in range(self.out_channels):
-                channel_outputs = []
                 for i in range(height_out):
-                    row_outputs = []
                     for j in range(width_out):
                         conv_sum = Tensor(0.0, requires_grad=True)
-                        
+                        h_start = i * self.stride
+                        w_start = j * self.stride
+                        h_end = h_start + self.kernel_size
+                        w_end = w_start + self.kernel_size
+
                         for in_c in range(self.in_channels):
-                            h_start = i * self.stride - self.padding
-                            w_start = j * self.stride - self.padding  
-                            h_end = h_start + self.kernel_size
-                            w_end = w_start + self.kernel_size
-                            
-                            if h_start < 0 or w_start < 0 or h_end > height or w_end > width:
-                                continue
-                            
-                            region_data = []
-                            for kh in range(self.kernel_size):
-                                region_row = []
-                                for kw in range(self.kernel_size):
-                                    if (h_start + kh >= 0 and h_start + kh < height and 
-                                        w_start + kw >= 0 and w_start + kw < width):
-                                        region_row.append(x.data[b][in_c][h_start + kh][w_start + kw])
-                                    else:
-                                        region_row.append(0.0)
-                                region_data.append(region_row)
-                            
-                            region = Tensor(region_data, requires_grad=x.requires_grad)
-                            kernel = Tensor(self.weights.data[out_c][in_c], requires_grad=self.weights.requires_grad)
-                            
-                            conv_sum = conv_sum + (region * kernel).sum()
-                        
-                        result = conv_sum + self.biases[out_c]
-                        row_outputs.append(result)
-                    channel_outputs.append(row_outputs)
-                batch_outputs.append(channel_outputs)
-            outputs.append(batch_outputs)
-        
-        output_data = [[[[outputs[b][out_c][i][j].data for j in range(width_out)] 
-                          for i in range(height_out)] 
-                         for out_c in range(self.out_channels)] 
-                        for b in range(batch_size)]
-        
-        return Tensor(output_data, requires_grad=x.requires_grad or self.weights.requires_grad)
+                            region = x_padded[b, in_c, h_start:h_end, w_start:w_end]
+                            kernel = self.weights[out_c][in_c]
+                            conv_sum += (region * kernel).sum()
+
+                        output[b, out_c, i, j] = conv_sum + self.biases[out_c]
+
+        return output
 
     def step(self, lr):
         pass

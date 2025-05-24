@@ -1,27 +1,92 @@
 from __future__ import annotations
-from typing import List, Union, Callable, Optional, Set, Iterator
+from typing import List, Union, Callable, Optional, Set, Iterator, Tuple
 import math
 
 Num = Union[int, float]
 
+# Helper functions
+def _elementwise_op(a, b, op):
+    if isinstance(a, list) and isinstance(b, list):
+        return [_elementwise_op(x, y, op) for x, y in zip(a, b)]
+    elif isinstance(a, list):
+        return [_elementwise_op(x, b, op) for x in a]
+    elif isinstance(b, list):
+        return [_elementwise_op(a, y, op) for y in b]
+    else:
+        return op(a, b)
+    
+def _add_gradients(grad1, grad2):
+    """Add two gradients with same structure"""
+    if grad1 is None:
+        return grad2
+    if grad2 is None:
+        return grad1
+    return _elementwise_op(grad1, grad2, lambda x, y: x + y)
+    
+# Create zeros with same structure as data
+def _zeros_like(data):
+    """Create zeros with same structure as data"""
+    if isinstance(data, list):
+        return [_zeros_like(item) for item in data]
+    else:
+        return 0.0
+
+# Create ones with same structure as data
+def _ones_like(data):
+    """Create ones with same structure as data"""
+    if isinstance(data, list):
+        return [_ones_like(item) for item in data]
+    else:
+        return 1.0
+
+def _sum_recursive(data):
+    """Recursively sum all elements"""
+    if isinstance(data, list):
+        return sum(_sum_recursive(item) for item in data)
+    else:
+        return data
+
+
 class Tensor:
     """Tensor class"""
-    def __init__(self, data: Union[Num, List[Num]], requires_grad: bool=True):
+    def __init__(self, data: Union[Num, List[Num]], requires_grad: bool=False):
         """
         Arg:
             data (Union[Num, List[Num]]): Data to store
-            requires_grad (bool): If True, the tensor will track gradients
+            requires_grad (bool): If False, the tensor will track gradients
         """
     
         self.data: Union[Num, List[Num]] = data
         self.requires_grad: bool = requires_grad
-        self.grad: Optional[float] = 0.0 if requires_grad else None
+        self.grad: Optional[Union[Num, List[Num]]] = _zeros_like(data) if requires_grad else None
         self._backward: Callable[[], None] = lambda: None
         self._prev: Set[Tensor] = set()
 
-    def __getitem__(self, index: int) -> Tensor:
-        value = self.data[index]
-        return Tensor(value) if not isinstance(value, list) else Tensor(value)
+    def __getitem__(self, index) -> Tensor:
+        """Better indexing support"""
+        def _get_item_recursive(data, indices):
+            if not indices:
+                return data
+            if isinstance(indices[0], slice):
+                start, stop, step = indices[0].indices(len(data))
+                sliced_data = data[start:stop:step]
+                if len(indices) == 1:
+                    return sliced_data
+                return [_get_item_recursive(item, indices[1:]) for item in sliced_data]
+            else:
+                if len(indices) == 1:
+                    return data[indices[0]]
+                return _get_item_recursive(data[indices[0]], indices[1:])
+        
+        if isinstance(index, tuple):
+            value = _get_item_recursive(self.data, list(index))
+        elif isinstance(index, slice):
+            start, stop, step = index.indices(len(self.data))
+            value = self.data[start:stop:step]
+        else:
+            value = self.data[index]
+        
+        return Tensor(value, requires_grad=self.requires_grad)
 
     # representation of the Tensor
     def __repr__(self) -> str:
@@ -30,10 +95,8 @@ class Tensor:
     def __iter__(self) -> Iterator[Tensor]:
         if not isinstance(self.data, list):
             raise TypeError("0-D Tensor is not iterable")
-        if len(self.data) == 1 and not isinstance(self.data[0], list):
-            raise TypeError("0-D Tensor is not iterable")
         for item in self.data:
-            yield Tensor(item)
+            yield Tensor(item, requires_grad=self.requires_grad)
         
     def get_value(self) -> Union[Num, List[Num]]:
         return self.data[0] if len(self.data) == 1 else self.data
@@ -42,7 +105,6 @@ class Tensor:
         """Compute gradients"""
         if not self.requires_grad: # Too lazy to check if the tensor is a leaf node
             return
-
         
         # Build topological order
         topo = []
@@ -57,7 +119,7 @@ class Tensor:
 
         build_topo(self)
 
-        self.grad = 1.0 
+        self.grad = _ones_like(self.data)
         
         # Backpropagate
         for node in reversed(topo):
@@ -67,19 +129,16 @@ class Tensor:
     def __add__(self, other: Union[Num, Tensor]) -> Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(other, requires_grad=False)
+        data = _elementwise_op(self.data, other.data, lambda x, y: x + y)
         
-        out = Tensor(self.data + other.data, requires_grad=self.requires_grad or other.requires_grad)
+        out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
         out._prev = {self, other}
 
         def _backward():
-            if self.requires_grad:
-                if self.grad is None:
-                    self.grad = 0.0
-                self.grad += out.grad
-            if other.requires_grad:
-                if other.grad is None:
-                    other.grad = 0.0
-                other.grad += out.grad
+            if self.requires_grad and self.grad is not None:
+                self.grad = _add_gradients(self.grad, out.grad)
+            if other.requires_grad and other.grad is not None:
+                other.grad = _add_gradients(other.grad, out.grad)
         
         out._backward = _backward
         return out
@@ -87,19 +146,17 @@ class Tensor:
     def __sub__(self, other: Union[Num, Tensor]) -> Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(other, requires_grad=False)
-        
-        out = Tensor(self.data - other.data, requires_grad=self.requires_grad or other.requires_grad)
+        data = _elementwise_op(self.data, other.data, lambda x, y: x - y)
+
+        out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
         out._prev = {self, other}
 
         def _backward():
-            if self.requires_grad:
-                if self.grad is None:
-                    self.grad = 0.0
-                self.grad += out.grad
-            if other.requires_grad:
-                if other.grad is None:
-                    other.grad = 0.0
-                other.grad -= out.grad
+            if self.requires_grad and self.grad is not None:
+                self.grad = _add_gradients(self.grad, out.grad)
+            if other.requires_grad and other.grad is not None:
+                neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
+                other.grad = _add_gradients(other.grad, neg_grad)
         
         out._backward = _backward
         return out
@@ -107,19 +164,18 @@ class Tensor:
     def __mul__(self, other: Union[Num, Tensor]) -> Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(other, requires_grad=False)
+        data = _elementwise_op(self.data, other.data, lambda x, y: x * y)
         
-        out = Tensor(self.data * other.data, requires_grad=self.requires_grad or other.requires_grad)
+        out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
         out._prev = {self, other}
 
         def _backward():
-            if self.requires_grad:
-                if self.grad is None:
-                    self.grad = 0.0
-                self.grad += other.data * out.grad
-            if other.requires_grad:
-                if other.grad is None:
-                    other.grad = 0.0
-                other.grad += self.data * out.grad
+            if self.requires_grad and self.grad is not None:
+                grad_contribution = _elementwise_op(other.data, out.grad, lambda x, y: x * y)
+                self.grad = _add_gradients(self.grad, grad_contribution)
+            if other.requires_grad and other.grad is not None:
+                grad_contribution = _elementwise_op(self.data, out.grad, lambda x, y: x * y)
+                other.grad = _add_gradients(other.grad, grad_contribution)
         
         out._backward = _backward
         return out
@@ -131,20 +187,23 @@ class Tensor:
         # Check for division by zero
         if other.data == 0:
             raise ZeroDivisionError("Division by zero in tensor operation")
-        
-        out = Tensor(self.data / other.data, requires_grad=self.requires_grad or other.requires_grad)
+        data = _elementwise_op(self.data, other.data, lambda x, y: x / y)
+
+        out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
         out._prev = {self, other}
 
         def _backward():
-            if self.requires_grad:
-                if self.grad is None:
-                    self.grad = 0.0
-                self.grad += out.grad / other.data
-            if other.requires_grad:
-                if other.grad is None:
-                    other.grad = 0.0
-                other.grad -= out.grad * self.data / (other.data ** 2)
-        
+            if self.requires_grad and self.grad is not None:
+                grad_contribution = _elementwise_op(out.grad, other.data, lambda x, y: x / y)
+                self.grad = _add_gradients(self.grad, grad_contribution)
+            if other.requires_grad and other.grad is not None:
+                grad_contribution = _elementwise_op(
+                _elementwise_op(out.grad, self.data, lambda x, y: x * y),
+                _elementwise_op(other.data, other.data, lambda x, y: x * y),
+                lambda x, y: -x / y
+            )
+            other.grad = _add_gradients(other.grad, grad_contribution)
+           
         out._backward = _backward
         return out
 
@@ -160,23 +219,31 @@ class Tensor:
         if self.data == 0 and other.data == 0:
             raise ValueError("0^0 is undefined")
         
-        out = Tensor(self.data ** other.data, requires_grad=self.requires_grad or other.requires_grad)
+        data = _elementwise_op(self.data, other.data, lambda x, y: x ** y)
+        out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
         out._prev = {self, other}
 
         def _backward():
-            if self.requires_grad:
-                if self.grad is None:
-                    self.grad = 0.0
-                self.grad += out.grad * other.data * (self.data ** (other.data - 1))
-            if other.requires_grad:
-                if other.grad is None:
-                    other.grad = 0.0
-                # Only compute log gradient if self.data > 0
-                if self.data > 0:
-                    other.grad += out.grad * math.log(self.data) * (self.data ** other.data)
-                else:
-                    # For self.data <= 0, the log term is undefined; set gradient to 0
-                    other.grad += 0
+            if self.requires_grad and self.grad is not None:
+                grad_contribution = _elementwise_op(
+                    _elementwise_op(out.grad, other.data, lambda x, y: x * y),
+                    _elementwise_op(self.data, _elementwise_op(other.data, 1, lambda x, y: x - y), lambda x, y: x ** y),
+                    lambda x, y: x * y
+                )
+                self.grad = _add_gradients(self.grad, grad_contribution)
+            if other.requires_grad and other.grad is not None:
+                def compute_other_grad(self_val, other_val, out_grad_val):
+                    if self_val > 0:
+                        return out_grad_val * math.log(self_val) * (self_val ** other_val)
+                    else:
+                        return 0.0
+                
+                grad_contribution = _elementwise_op(
+                    _elementwise_op(self.data, other.data, lambda x, y: (x, y)),
+                    out.grad,
+                    lambda xy, grad: compute_other_grad(xy[0], xy[1], grad)
+                )
+                other.grad = _add_gradients(other.grad, grad_contribution)
         
         out._backward = _backward
         return out
@@ -186,10 +253,9 @@ class Tensor:
         out._prev = {self}
 
         def _backward():
-            if self.requires_grad:
-                if self.grad is None:
-                    self.grad = 0.0
-                self.grad -= out.grad
+            if self.requires_grad and self.grad is not None:
+                neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
+                self.grad = _add_gradients(self.grad, neg_grad)
         
         out._backward = _backward
         return out
@@ -207,6 +273,28 @@ class Tensor:
         other_tensor = Tensor(other, requires_grad=False)
         return other_tensor / self
 
+    def sum(self) -> Tensor:
+        """Sum all elements in the tensor"""
+        total = _sum_recursive(self.data)
+        
+        out = Tensor(total, requires_grad=self.requires_grad)
+        out._prev = {self}
+        
+        def _backward():
+            if self.requires_grad:
+                grad_contribution = _ones_like(self.data)
+                def scale_grad(grad_struct, scale):
+                    if isinstance(grad_struct, list):
+                        return [scale_grad(item, scale) for item in grad_struct]
+                    else:
+                        return grad_struct * scale
+                
+                scaled_grad = scale_grad(grad_contribution, out.grad)
+                self.grad = _add_gradients(self.grad, scaled_grad)
+        
+        out._backward = _backward
+        return out
+
     @property
     def shape(self):
         return (1,) if isinstance(self.data, (int, float)) else (len(self.data),)
@@ -217,14 +305,60 @@ class Tensor:
     def clone(self) -> Tensor:
         return Tensor(self.data, requires_grad=self.requires_grad)
 
-    # # Maybe use -> casue I might implement it somewhere else
-    # def zero_grad(self):
-    #     visited = set()
-    #     def _zero(t):
-    #         if t not in visited:
-    #             visited.add(t)
-    #             if t.requires_grad:
-    #                 t.grad = 0.0
-    #             for child in t._prev:
-    #                 _zero(child)
-    #     _zero(self)
+    @staticmethod
+    def zero_grad(self):
+        """Zero the gradients"""
+        if self.requires_grad:
+            self.grad = _zeros_like(self.data)
+
+    # Added shape
+    @staticmethod
+    def shape(self) -> Tuple[int, ...]:
+        """Get the shape of the tensor."""
+        if isinstance(self.data, list):
+            return (len(self.data),)
+        return ()
+    
+    @classmethod
+    def zeros(cls, shape: Tuple[int, ...], requires_grad: bool = False) -> Tensor:
+        """
+        Create a tensor filled with zeros.
+        Args: 
+            shape (Tuple[int, ...]): Shape of the tensor to create
+            requires_grad (bool): If True, the tensor will track gradients
+        Returns:
+            Tensor: A tensor filled with zeros of the specified shape
+        """
+        def build_zeros(s):
+            if len(s) == 1:
+                return [0.0] * s[0]
+            return [build_zeros(s[1:]) for _ in range(s[0])]
+        
+        if len(shape) == 0:
+            data = 0.0
+        else:
+            data = build_zeros(shape)
+        
+        return cls(data, requires_grad=requires_grad)
+    
+    @property
+    def shape(self) -> Tuple[int, ...]:
+        def _shape(data):
+            if isinstance(data, list):
+                if len(data) == 0:
+                    return (0,)
+                return (len(data),) + _shape(data[0])
+            else:
+                return ()
+        return _shape(self.data)
+    
+    # Mimic torch_no_grad
+    def freeze(self):
+        """Freeze this tensor (stop gradient computation)"""
+        self.requires_grad = False
+        self.grad = None
+    
+    def unfreeze(self):
+        """Unfreeze this tensor (enable gradient computation)"""
+        self.requires_grad = True
+        self.grad = _zeros_like(self.data)

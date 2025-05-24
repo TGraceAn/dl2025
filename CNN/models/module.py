@@ -42,6 +42,17 @@ class Module(ABC):
         # For every weight and bias in the layer, set the gradient to zero
         # Get all children of the module
 
+    # # TODO: Implement freeze and unfreeze methods for fine-tuning or transfer learning later
+    # def freeze(self):
+    #     """Freeze the weights and biases of the layer"""
+    #     self.weights.requires_grad = False
+    #     self.biases.requires_grad = False
+
+    # def unfreeze(self):
+    #     """Unfreeze the weights and biases of the layer"""
+    #     self.weights.requires_grad = True
+    #     self.biases.requires_grad = True
+
     def step(self, lr: float):
         """Update the weights using the optimizer"""
         pass
@@ -49,7 +60,7 @@ class Module(ABC):
 
 class Convol2D(Module):
     """2D Convolutional layer"""
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, requires_grad: bool = True):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0):
         """
         Args:
             in_channels (int): Number of input channels
@@ -68,18 +79,14 @@ class Convol2D(Module):
         self.stride = stride
         self.padding = padding
         
-        self.weights = []
-        for out_c in range(out_channels):
-            out_channel_weights = []
-            for in_c in range(in_channels):
-                kernel_weights = []
-                for _ in range(kernel_size * kernel_size):
-                    kernel_weights.append(rng.uniform(-0.5,0.5))
-                out_channel_weights.append(kernel_weights)
-            self.weights.append(out_channel_weights)
+        std = math.sqrt(2.0 / (in_channels * kernel_size * kernel_size)) # recommmended
+        weights_data = [[[[rng.normal(0, std) for _ in range(kernel_size)] 
+                          for _ in range(kernel_size)] 
+                         for _ in range(in_channels)] 
+                        for _ in range(out_channels)]
         
-        self.weights = Tensor(self.weights, requires_grad=True)
-        
+        self.weights = Tensor(weights_data, requires_grad=True)
+
         self.biases = [rng.uniform(-0.5,0.5) for _ in range(out_channels)]
         self.biases = Tensor(self.biases, requires_grad=True)
         
@@ -93,32 +100,59 @@ class Convol2D(Module):
         Returns:
             Output tensor with shape (batch_size, out_channels, height_out, width_out)
         """
-        self.last_input = x
-        batch_size, in_channels, height, width = x.shape
+        batch_size, _, height, width = x.shape
         height_out = (height + 2 * self.padding - self.kernel_size) // self.stride + 1
         width_out = (width + 2 * self.padding - self.kernel_size) // self.stride + 1
-        output = Tensor.zeros((batch_size, self.out_channels, height_out, width_out), requires_grad=self.weights.requires_grad)
+        
+        outputs = []
         
         # Bad code, improve later
         for b in range(batch_size):
+            batch_outputs = []
             for out_c in range(self.out_channels):
-                for in_c in range(self.in_channels):
-                    for i in range(height_out):
-                        for j in range(width_out):
+                channel_outputs = []
+                for i in range(height_out):
+                    row_outputs = []
+                    for j in range(width_out):
+                        conv_sum = Tensor(0.0, requires_grad=True)
+                        
+                        for in_c in range(self.in_channels):
                             h_start = i * self.stride - self.padding
-                            w_start = j * self.stride - self.padding
+                            w_start = j * self.stride - self.padding  
                             h_end = h_start + self.kernel_size
                             w_end = w_start + self.kernel_size
                             
                             if h_start < 0 or w_start < 0 or h_end > height or w_end > width:
                                 continue
                             
-                            region = x[b, in_c, h_start:h_end, w_start:w_end]
-                            output[b, out_c, i, j] += (region * self.weights[out_c][in_c]).sum() + self.biases[out_c]
-        return output
-
-    def backward(self, x):
-        pass
+                            region_data = []
+                            for kh in range(self.kernel_size):
+                                region_row = []
+                                for kw in range(self.kernel_size):
+                                    if (h_start + kh >= 0 and h_start + kh < height and 
+                                        w_start + kw >= 0 and w_start + kw < width):
+                                        region_row.append(x.data[b][in_c][h_start + kh][w_start + kw])
+                                    else:
+                                        region_row.append(0.0)
+                                region_data.append(region_row)
+                            
+                            region = Tensor(region_data, requires_grad=x.requires_grad)
+                            kernel = Tensor(self.weights.data[out_c][in_c], requires_grad=self.weights.requires_grad)
+                            
+                            conv_sum = conv_sum + (region * kernel).sum()
+                        
+                        result = conv_sum + self.biases[out_c]
+                        row_outputs.append(result)
+                    channel_outputs.append(row_outputs)
+                batch_outputs.append(channel_outputs)
+            outputs.append(batch_outputs)
+        
+        output_data = [[[[outputs[b][out_c][i][j].data for j in range(width_out)] 
+                          for i in range(height_out)] 
+                         for out_c in range(self.out_channels)] 
+                        for b in range(batch_size)]
+        
+        return Tensor(output_data, requires_grad=x.requires_grad or self.weights.requires_grad)
 
     def step(self, lr):
         pass

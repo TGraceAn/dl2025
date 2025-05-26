@@ -59,8 +59,6 @@ class Tensor:
         self.data: Union[Num, List[Num]] = data
         self.requires_grad: bool = requires_grad
         self.grad: Optional[Union[Num, List[Num]]] = _zeros_like(data) if requires_grad else None
-        self._backward: Callable[[], None] = lambda: None
-        self._prev: Set[Tensor] = set()
 
     def __getitem__(self, index) -> Tensor:
         """Better indexing support"""
@@ -101,46 +99,12 @@ class Tensor:
     def get_value(self) -> Union[Num, List[Num]]:
         return self.data[0] if len(self.data) == 1 else self.data
     
-    def backward(self):
-        """Compute gradients"""
-        if not self.requires_grad: # Too lazy to check if the tensor is a leaf node
-            return
-        
-        # Build topological order
-        topo = []
-        visited = set()
-
-        def build_topo(t):
-            if t not in visited:
-                visited.add(t)
-                for child in t._prev:
-                    build_topo(child)
-                topo.append(t)
-
-        build_topo(self)
-
-        self.grad = _ones_like(self.data)
-        
-        # Backpropagate
-        for node in reversed(topo):
-            node._backward()
-
-    ## Operators for tensor operations ## 
     def __add__(self, other: Union[Num, Tensor]) -> Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(other, requires_grad=False)
         data = _elementwise_op(self.data, other.data, lambda x, y: x + y)
         
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                self.grad = _add_gradients(self.grad, out.grad)
-            if other.requires_grad and other.grad is not None:
-                other.grad = _add_gradients(other.grad, out.grad)
-        
-        out._backward = _backward
         return out
         
     def __sub__(self, other: Union[Num, Tensor]) -> Tensor:
@@ -149,16 +113,6 @@ class Tensor:
         data = _elementwise_op(self.data, other.data, lambda x, y: x - y)
 
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                self.grad = _add_gradients(self.grad, out.grad)
-            if other.requires_grad and other.grad is not None:
-                neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
-                other.grad = _add_gradients(other.grad, neg_grad)
-        
-        out._backward = _backward
         return out
         
     def __mul__(self, other: Union[Num, Tensor]) -> Tensor:
@@ -167,17 +121,6 @@ class Tensor:
         data = _elementwise_op(self.data, other.data, lambda x, y: x * y)
         
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                grad_contribution = _elementwise_op(other.data, out.grad, lambda x, y: x * y)
-                self.grad = _add_gradients(self.grad, grad_contribution)
-            if other.requires_grad and other.grad is not None:
-                grad_contribution = _elementwise_op(self.data, out.grad, lambda x, y: x * y)
-                other.grad = _add_gradients(other.grad, grad_contribution)
-        
-        out._backward = _backward
         return out
         
     def __truediv__(self, other : Union[Num, Tensor]) -> Tensor:
@@ -190,21 +133,6 @@ class Tensor:
         data = _elementwise_op(self.data, other.data, lambda x, y: x / y)
 
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                grad_contribution = _elementwise_op(out.grad, other.data, lambda x, y: x / y)
-                self.grad = _add_gradients(self.grad, grad_contribution)
-            if other.requires_grad and other.grad is not None:
-                grad_contribution = _elementwise_op(
-                _elementwise_op(out.grad, self.data, lambda x, y: x * y),
-                _elementwise_op(other.data, other.data, lambda x, y: x * y),
-                lambda x, y: -x / y
-            )
-            other.grad = _add_gradients(other.grad, grad_contribution)
-           
-        out._backward = _backward
         return out
 
     def __pow__(self, other : Union[Num, Tensor]) -> Tensor:
@@ -221,43 +149,10 @@ class Tensor:
         
         data = _elementwise_op(self.data, other.data, lambda x, y: x ** y)
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                grad_contribution = _elementwise_op(
-                    _elementwise_op(out.grad, other.data, lambda x, y: x * y),
-                    _elementwise_op(self.data, _elementwise_op(other.data, 1, lambda x, y: x - y), lambda x, y: x ** y),
-                    lambda x, y: x * y
-                )
-                self.grad = _add_gradients(self.grad, grad_contribution)
-            if other.requires_grad and other.grad is not None:
-                def compute_other_grad(self_val, other_val, out_grad_val):
-                    if self_val > 0:
-                        return out_grad_val * math.log(self_val) * (self_val ** other_val)
-                    else:
-                        return 0.0
-                
-                grad_contribution = _elementwise_op(
-                    _elementwise_op(self.data, other.data, lambda x, y: (x, y)),
-                    out.grad,
-                    lambda xy, grad: compute_other_grad(xy[0], xy[1], grad)
-                )
-                other.grad = _add_gradients(other.grad, grad_contribution)
-        
-        out._backward = _backward
         return out
         
     def __neg__(self) -> Tensor:
         out = Tensor(-self.data, requires_grad=self.requires_grad)
-        out._prev = {self}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
-                self.grad = _add_gradients(self.grad, neg_grad)
-        
-        out._backward = _backward
         return out
     
     def __radd__(self, other: Union[Num, Tensor]) -> Tensor:
@@ -278,46 +173,18 @@ class Tensor:
         total = _sum_recursive(self.data)
         
         out = Tensor(total, requires_grad=self.requires_grad)
-        out._prev = {self}
-        
-        def _backward():
-            if self.requires_grad:
-                grad_contribution = _ones_like(self.data)
-                def scale_grad(grad_struct, scale):
-                    if isinstance(grad_struct, list):
-                        return [scale_grad(item, scale) for item in grad_struct]
-                    else:
-                        return grad_struct * scale
-                
-                scaled_grad = scale_grad(grad_contribution, out.grad)
-                self.grad = _add_gradients(self.grad, scaled_grad)
-        
-        out._backward = _backward
         return out
 
-    @property
-    def shape(self):
-        return (1,) if isinstance(self.data, (int, float)) else (len(self.data),)
-    
     def detach(self) -> Tensor:
         return Tensor(self.data, requires_grad=False)
 
     def clone(self) -> Tensor:
         return Tensor(self.data, requires_grad=self.requires_grad)
 
-    @staticmethod
     def zero_grad(self):
         """Zero the gradients"""
         if self.requires_grad:
             self.grad = _zeros_like(self.data)
-
-    # Added shape
-    @staticmethod
-    def shape(self) -> Tuple[int, ...]:
-        """Get the shape of the tensor."""
-        if isinstance(self.data, list):
-            return (len(self.data),)
-        return ()
     
     @classmethod
     def zeros(cls, shape: Tuple[int, ...], requires_grad: bool = False) -> Tensor:
@@ -351,14 +218,243 @@ class Tensor:
             else:
                 return ()
         return _shape(self.data)
+
+
+class Parameter(Tensor):
+    """Parameter class that inherits from Tensor"""
+    def __init__(self, data: Union[Num, List[Num]], requires_grad: bool = True):
+        """
+        Args:
+            data (Union[Num, List[Num]]): Data to store
+            requires_grad (bool): If True, the parameter will track gradients (default: True)
+        """
+        super().__init__(data, requires_grad=requires_grad)
+        self._backward: Callable[[], None] = lambda: None
+        self._prev: Set[Tensor] = set()
     
-    # Mimic torch_no_grad
-    def freeze(self):
-        """Freeze this tensor (stop gradient computation)"""
-        self.requires_grad = False
-        self.grad = None
+    def __repr__(self) -> str:
+        return f"Parameter({self.data})"
     
-    def unfreeze(self):
-        """Unfreeze this tensor (enable gradient computation)"""
-        self.requires_grad = True
-        self.grad = _zeros_like(self.data)
+    def backward(self):
+        """Compute gradients"""
+        if not self.requires_grad: # Too lazy to check if the tensor is a leaf node
+            return
+        
+        # Build topological order
+        topo = []
+        visited = set()
+
+        def build_topo(t):
+            if t not in visited:
+                visited.add(t)
+                for child in t._prev:
+                    build_topo(child)
+                topo.append(t)
+
+        build_topo(self)
+
+        self.grad = _ones_like(self.data)
+        
+        # Backpropagate
+        for node in reversed(topo):
+            node._backward()
+
+    ## Override operators to support gradient computation ##
+    def __add__(self, other: Union[Num, Tensor]) -> Parameter:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        data = _elementwise_op(self.data, other.data, lambda x, y: x + y)
+        
+        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            if self.requires_grad and self.grad is not None:
+                self.grad = _add_gradients(self.grad, out.grad)
+            if other.requires_grad and other.grad is not None:
+                other.grad = _add_gradients(other.grad, out.grad)
+        
+        out._backward = _backward
+        return out
+        
+    def __sub__(self, other: Union[Num, Tensor]) -> Parameter:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        data = _elementwise_op(self.data, other.data, lambda x, y: x - y)
+
+        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            if self.requires_grad and self.grad is not None:
+                self.grad = _add_gradients(self.grad, out.grad)
+            if other.requires_grad and other.grad is not None:
+                neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
+                other.grad = _add_gradients(other.grad, neg_grad)
+        
+        out._backward = _backward
+        return out
+        
+    def __mul__(self, other: Union[Num, Tensor]) -> Parameter:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        data = _elementwise_op(self.data, other.data, lambda x, y: x * y)
+        
+        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            if self.requires_grad and self.grad is not None:
+                grad_contribution = _elementwise_op(other.data, out.grad, lambda x, y: x * y)
+                self.grad = _add_gradients(self.grad, grad_contribution)
+            if other.requires_grad and other.grad is not None:
+                grad_contribution = _elementwise_op(self.data, out.grad, lambda x, y: x * y)
+                other.grad = _add_gradients(other.grad, grad_contribution)
+        
+        out._backward = _backward
+        return out
+        
+    def __truediv__(self, other : Union[Num, Tensor]) -> Parameter:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        
+        # Check for division by zero
+        if other.data == 0:
+            raise ZeroDivisionError("Division by zero in tensor operation")
+        data = _elementwise_op(self.data, other.data, lambda x, y: x / y)
+
+        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            if self.requires_grad and self.grad is not None:
+                grad_contribution = _elementwise_op(out.grad, other.data, lambda x, y: x / y)
+                self.grad = _add_gradients(self.grad, grad_contribution)
+            if other.requires_grad and other.grad is not None:
+                grad_contribution = _elementwise_op(
+                _elementwise_op(out.grad, self.data, lambda x, y: x * y),
+                _elementwise_op(other.data, other.data, lambda x, y: x * y),
+                lambda x, y: -x / y
+            )
+            other.grad = _add_gradients(other.grad, grad_contribution)
+           
+        out._backward = _backward
+        return out
+
+    def __pow__(self, other : Union[Num, Tensor]) -> Parameter:
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        
+        # Check for problematic cases
+        if self.data == 0 and other.data < 0:
+            raise ZeroDivisionError("Cannot raise 0 to a negative power")
+        if self.data < 0 and not isinstance(other.data, int):
+            raise ValueError("Cannot raise negative number to non-integer power")
+        if self.data == 0 and other.data == 0:
+            raise ValueError("0^0 is undefined")
+        
+        data = _elementwise_op(self.data, other.data, lambda x, y: x ** y)
+        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            if self.requires_grad and self.grad is not None:
+                grad_contribution = _elementwise_op(
+                    _elementwise_op(out.grad, other.data, lambda x, y: x * y),
+                    _elementwise_op(self.data, _elementwise_op(other.data, 1, lambda x, y: x - y), lambda x, y: x ** y),
+                    lambda x, y: x * y
+                )
+                self.grad = _add_gradients(self.grad, grad_contribution)
+            if other.requires_grad and other.grad is not None:
+                def compute_other_grad(self_val, other_val, out_grad_val):
+                    if self_val > 0:
+                        return out_grad_val * math.log(self_val) * (self_val ** other_val)
+                    else:
+                        return 0.0
+                
+                grad_contribution = _elementwise_op(
+                    _elementwise_op(self.data, other.data, lambda x, y: (x, y)),
+                    out.grad,
+                    lambda xy, grad: compute_other_grad(xy[0], xy[1], grad)
+                )
+                other.grad = _add_gradients(other.grad, grad_contribution)
+        
+        out._backward = _backward
+        return out
+        
+    def __neg__(self) -> Parameter:
+        out = Parameter(-self.data, requires_grad=self.requires_grad)
+        out._prev = {self}
+
+        def _backward():
+            if self.requires_grad and self.grad is not None:
+                neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
+                self.grad = _add_gradients(self.grad, neg_grad)
+        
+        out._backward = _backward
+        return out
+    
+    def __radd__(self, other: Union[Num, Tensor]) -> Parameter:
+        return self + other
+
+    def __rsub__(self, other: Union[Num, Tensor]) -> Parameter:
+        return Parameter(other, requires_grad=False) - self
+
+    def __rmul__(self, other: Union[Num, Tensor]) -> Parameter:
+        return self * other
+
+    def __rtruediv__(self, other: Union[Num, Tensor]) -> Parameter:
+        other_param = Parameter(other, requires_grad=False)
+        return other_param / self
+
+    def sum(self) -> Parameter:
+        """Sum all elements in the parameter"""
+        total = _sum_recursive(self.data)
+        
+        out = Parameter(total, requires_grad=self.requires_grad)
+        out._prev = {self}
+        
+        def _backward():
+            if self.requires_grad:
+                grad_contribution = _ones_like(self.data)
+                def scale_grad(grad_struct, scale):
+                    if isinstance(grad_struct, list):
+                        return [scale_grad(item, scale) for item in grad_struct]
+                    else:
+                        return grad_struct * scale
+                
+                scaled_grad = scale_grad(grad_contribution, out.grad)
+                self.grad = _add_gradients(self.grad, scaled_grad)
+        
+        out._backward = _backward
+        return out
+    
+    @classmethod
+    def zeros(cls, shape: Tuple[int, ...], requires_grad: bool = True) -> Parameter:
+        """
+        Create a parameter filled with zeros.
+        Args: 
+            shape (Tuple[int, ...]): Shape of the parameter to create
+            requires_grad (bool): If True, the parameter will track gradients (default: True)
+        Returns:
+            Parameter: A parameter filled with zeros of the specified shape
+        """
+        def build_zeros(s):
+            if len(s) == 1:
+                return [0.0] * s[0]
+            return [build_zeros(s[1:]) for _ in range(s[0])]
+        
+        if len(shape) == 0:
+            data = 0.0
+        else:
+            data = build_zeros(shape)
+        
+        return cls(data, requires_grad=requires_grad)
+    
+    def detach(self) -> Tensor:
+        """Detach returns a Tensor, not a Parameter"""
+        return Tensor(self.data, requires_grad=False)
+    
+    def clone(self) -> Parameter:
+        """Clone returns a Parameter"""
+        return Parameter(self.data, requires_grad=self.requires_grad)

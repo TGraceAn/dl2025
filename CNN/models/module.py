@@ -2,7 +2,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Tuple, Union, Callable, Optional, Set, Iterator
 import math
-from torch_lite import Tensor
+from torch_lite import Tensor, Parameter
 from functional import sigmoid, relu
 from random_lite import SimpleRandom
 
@@ -78,19 +78,14 @@ class Convol2D(Module):
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
-        
-        std = math.sqrt(2.0 / (in_channels * kernel_size * kernel_size)) # recommmended
+        std = math.sqrt(2.0 / (in_channels * kernel_size * kernel_size)) # recommended initialization for Conv2D layers I read somewhere
         weights_data = [[[[rng.normal(0, std) for _ in range(kernel_size)] 
                           for _ in range(kernel_size)] 
                          for _ in range(in_channels)] 
                         for _ in range(out_channels)]
-        
-        self.weights = Tensor(weights_data, requires_grad=True)
-
-        self.biases = [rng.uniform(-0.5,0.5) for _ in range(out_channels)]
-        self.biases = Tensor(self.biases, requires_grad=True)
-        
-        self.last_input = None # to store the last input for backward pass
+        self.weights = Parameter(weights_data) 
+        self.biases = Parameter([rng.uniform(-0.5, 0.5) for _ in range(out_channels)]) 
+        self.last_input = None
 
     def forward(self, x: Tensor) -> Tensor:
         """
@@ -106,13 +101,12 @@ class Convol2D(Module):
         if self.padding > 0:
             x_padded = Tensor.zeros((batch_size, self.in_channels,
                                      height + 2 * self.padding,
-                                     width + 2 * self.padding),
-                                    requires_grad=x.requires_grad)
+                                     width + 2 * self.padding), requires_grad=x.requires_grad)
             for b in range(batch_size):
                 for c in range(self.in_channels):
                     for i in range(height):
                         for j in range(width):
-                            x_padded[b, c, i + self.padding, j + self.padding] = x[b, c, i, j]
+                            x_padded.data[b][c][i + self.padding][j + self.padding] = x.data[b][c][i][j]
         else:
             x_padded = x
 
@@ -122,26 +116,34 @@ class Convol2D(Module):
         height_out = (padded_height - self.kernel_size) // self.stride + 1
         width_out = (padded_width - self.kernel_size) // self.stride + 1
 
-        output = Tensor.zeros((batch_size, self.out_channels, height_out, width_out), requires_grad=True)
-
+        output_list = []
         for b in range(batch_size):
+            batch_list = []
             for out_c in range(self.out_channels):
+                channel_list = []
                 for i in range(height_out):
+                    row_list = []
                     for j in range(width_out):
-                        conv_sum = Tensor(0.0, requires_grad=True)
                         h_start = i * self.stride
                         w_start = j * self.stride
                         h_end = h_start + self.kernel_size
                         w_end = w_start + self.kernel_size
 
+                        conv_sum = Parameter(0.0)
+
                         for in_c in range(self.in_channels):
                             region = x_padded[b, in_c, h_start:h_end, w_start:w_end]
-                            kernel = self.weights[out_c][in_c]
-                            conv_sum += (region * kernel).sum()
+                            kernel = Tensor(self.weights.data[out_c][in_c], requires_grad=self.weights.requires_grad)
+                            conv_sum = conv_sum + (region * kernel).sum()
 
-                        output[b, out_c, i, j] = conv_sum + self.biases[out_c]
+                        result = conv_sum + self.biases[out_c]
+                        row_list.append(result.data)
+                    channel_list.append(row_list)
+                batch_list.append(channel_list)
+            output_list.append(batch_list)
 
-        return output
+        requires_grad = x.requires_grad or self.weights.requires_grad or self.biases.requires_grad
+        return Parameter(output_list, requires_grad=requires_grad)
 
     def step(self, lr):
         pass

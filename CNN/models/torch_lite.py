@@ -286,6 +286,32 @@ class Tensor:
                 result.append(self._reshape_flat_to_nested(inner_data, inner_shape))
             return result
 
+    def transpose(self) -> Tensor:
+        """ Transpose a 2D tensor. """
+        if len(self.shape) != 2:
+            raise ValueError("Transpose is only supported for 2D tensors.")
+        
+        rows, cols = self.shape
+        transposed_data = [[self.data[j][i] for j in range(rows)] for i in range(cols)]
+        return Tensor(transposed_data)
+
+    def __matmul__(self, other: Tensor) -> Tensor:
+        """ Matrix multiplication """
+        if not isinstance(other, Tensor):
+            other = Tensor(other)
+
+        # Validate shapes
+        if len(self.shape) != 2 or len(other.shape) != 2:
+            raise ValueError("Matrix multiplication is only supported for 2D tensors.")
+        if self.shape[1] != other.shape[0]:
+            raise ValueError(f"Mismatched dimensions for matrix multiplication: {self.shape} and {other.shape}")
+
+        # Perform multiplication
+        result_data = [[sum(a * b for a, b in zip(A_row, B_col)) for B_col in zip(*other.data)] for A_row in self.data]
+        
+        return Tensor(result_data, requires_grad=self.requires_grad or other.requires_grad)
+
+
 class Parameter(Tensor):
     """Parameter class that inherits from Tensor"""
     def __init__(self, data: Union[Num, List[Num]], requires_grad: bool = True):
@@ -491,6 +517,36 @@ class Parameter(Tensor):
                 
                 scaled_grad = scale_grad(grad_contribution, out.grad)
                 self.grad = _add_gradients(self.grad, scaled_grad)
+
+        out._backward = _backward
+        return out
+        
+    def __matmul__(self, other: Tensor) -> Parameter:
+        """ Matrix multiplication with gradient tracking. """
+        if not isinstance(other, Tensor):
+            other = Tensor(other)
+        
+        # Forward pass is the same as the parent class
+        result_data = super().__matmul__(other).data
+        
+        out = Parameter(result_data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            # Gradient for self: out.grad @ other.T
+            if self.requires_grad:
+                other_t = other.transpose()
+                grad_self = Parameter(out.grad).__matmul__(other_t)
+                self.grad = _add_gradients(self.grad, grad_self.data)
+
+            # Gradient for other: self.T @ out.grad
+            if other.requires_grad:
+                self_t = self.transpose()
+                grad_other = self_t.__matmul__(Parameter(out.grad))
+                # Ensure other.grad is initialized if it's a non-Parameter tensor
+                if other.grad is None:
+                    other.grad = _zeros_like(other.data)
+                other.grad = _add_gradients(other.grad, grad_other.data)
         
         out._backward = _backward
         return out
@@ -519,7 +575,7 @@ class Parameter(Tensor):
     
     def detach(self) -> Tensor:
         """Detach returns a Tensor, not a Parameter"""
-        return Tensor(self.data, requires_grad=False)
+        return Tensor(self.data)
     
     def clone(self) -> Parameter:
         """Clone returns a Parameter"""

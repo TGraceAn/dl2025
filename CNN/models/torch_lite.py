@@ -218,7 +218,73 @@ class Tensor:
             else:
                 return ()
         return _shape(self.data)
+    
+    def flatten(self) -> Tensor:
+        """
+        Flatten tensor to 1D.
+        
+        Returns:
+            New 1D tensor with flattened data
+        """
+        flat_data = self._flatten_recursive(self.data)
+        return Tensor(flat_data)
+    
+    def reshape(self, new_shape: Tuple[int, ...]) -> Tensor:
+        """
+        Reshape tensor to new shape.
+        Args:
+            new_shape: Target shape as tuple of integers
+            
+        Returns:
+            New tensor with reshaped data
+        """
 
+        current_elements = 1
+        for dim in self.shape:
+            current_elements *= dim
+
+        new_elements = 1
+        for dim in new_shape:
+            new_elements *= dim
+        
+        if current_elements != new_elements:
+            raise ValueError(f"Cannot reshape tensor of size {current_elements} to shape {new_shape} (size {new_elements})")
+        
+        flat_data = self._flatten_recursive(self.data)
+        new_data = self._reshape_flat_to_nested(flat_data, new_shape)
+        
+        return Tensor(new_data)
+
+    def _flatten_recursive(self, data):
+        if isinstance(data, list):
+            result = []
+            for item in data:
+                result.extend(self._flatten_recursive(item))
+            return result
+        else:
+            return [data]
+
+    def _reshape_flat_to_nested(self, flat_data: List[float], shape: Tuple[int, ...]) -> Union[float, List]:
+        """Reshape flat data to nested structure based on shape."""
+        if len(shape) == 0:
+            return flat_data[0]
+        elif len(shape) == 1:
+            return flat_data[:shape[0]]
+        else:
+            # Calculate size of outer dimension
+            outer_size = shape[0]
+            inner_elements = 1
+            for dim in shape[1:]:
+                inner_elements *= dim
+            
+            result = []
+            for i in range(outer_size):
+                start_idx = i * inner_elements
+                end_idx = start_idx + inner_elements
+                inner_data = flat_data[start_idx:end_idx]
+                inner_shape = shape[1:]
+                result.append(self._reshape_flat_to_nested(inner_data, inner_shape))
+            return result
 
 class Parameter(Tensor):
     """Parameter class that inherits from Tensor"""
@@ -458,3 +524,25 @@ class Parameter(Tensor):
     def clone(self) -> Parameter:
         """Clone returns a Parameter"""
         return Parameter(self.data, requires_grad=self.requires_grad)
+    
+    # Override flatten to return Parameter
+    def flatten(self) -> Parameter:
+        flat_data = self._flatten_recursive(self.data)
+        return Parameter(flat_data, requires_grad=self.requires_grad)
+    
+    def reshape(self, new_shape: Tuple[int, ...]) -> Parameter:
+        current_elements = 1
+        for dim in self.shape:
+            current_elements *= dim
+
+        new_elements = 1
+        for dim in new_shape:
+            new_elements *= dim
+        
+        if current_elements != new_elements:
+            raise ValueError(f"Cannot reshape parameter of size {current_elements} to shape {new_shape} (size {new_elements})")
+        
+        flat_data = self._flatten_recursive(self.data)
+        new_data = self._reshape_flat_to_nested(flat_data, new_shape)
+        
+        return Parameter(new_data, requires_grad=self.requires_grad)

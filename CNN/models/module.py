@@ -5,6 +5,7 @@ import math
 from torch_lite import Tensor, Parameter
 from functional import sigmoid, relu
 from random_lite import SimpleRandom
+from dataclasses import dataclass
 
 rng = SimpleRandom(seed=11) 
 
@@ -57,34 +58,44 @@ class Module(ABC):
         """Update the weights using the optimizer"""
         pass
 
+@dataclass
+class ModelConfig:
+    """
+    Args:
+        in_channels (int): Number of input channels
+        out_channels (int): Number of output channels
+        kernel_size (int): Size of the convolutional kernel
+        stride (int): Stride of the convolution
+        padding (int): Padding added to both sides of the input
+    """
+    in_channels: int
+    out_channels: int
+    kernel_size: int
+    stride: int = 1
+    padding: int = 0
+    
 
 class Convol2D(Module):
     """2D Convolutional layer"""
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0):
-        """
-        Args:
-            in_channels (int): Number of input channels
-            out_channels (int): Number of output channels
-            kernel_size (int): Size of the convolutional kernel
-            stride (int): Stride of the convolution
-            padding (int): Padding added to both sides of the input
-            requires_grad (bool): If True, gradients will be computed for this layer 
-                (False use for inference or for frozen layers later for fine-tuning or transfer learning)
-        """
-
+    def __init__(self, config: ModelConfig):
         super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.padding = padding
-        std = math.sqrt(2.0 / (in_channels * kernel_size * kernel_size)) # recommended initialization for Conv2D layers I read somewhere
-        weights_data = [[[[rng.normal(0, std) for _ in range(kernel_size)] 
-                          for _ in range(kernel_size)] 
-                         for _ in range(in_channels)] 
-                        for _ in range(out_channels)]
-        self.weights = Parameter(weights_data) 
-        self.biases = Parameter([rng.uniform(-0.5, 0.5) for _ in range(out_channels)]) 
+        self.config = config
+        self.in_channels = config.in_channels
+        self.out_channels = config.out_channels
+        self.kernel_size = config.kernel_size
+        self.stride = config.stride
+        self.padding = config.padding
+
+        # Calculate total elements needed
+        total_elements = config.out_channels * config.in_channels * config.kernel_size * config.kernel_size
+
+        std = math.sqrt(2.0 / (config.in_channels * config.kernel_size * config.kernel_size)) # recommended initialization for Conv2D layers I read somewhere
+        flat_weights = [rng.normal(0, std) for _ in range(total_elements)]
+        weights_tensor = Tensor(flat_weights)
+        weights_reshaped = weights_tensor.reshape((config.out_channels, config.in_channels, config.kernel_size, config.kernel_size))
+        self.weights = Parameter(weights_reshaped.data)
+
+        self.biases = Parameter([rng.uniform(-0.5, 0.5) for _ in range(config.out_channels)]) 
         self.last_input = None
 
     def forward(self, x: Tensor) -> Tensor:

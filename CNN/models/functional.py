@@ -3,7 +3,7 @@ import math
 from torch_lite import Tensor, Parameter, Num, _add_gradients, _elementwise_op
 from typing import Union
 
-
+# Even when out is param it won't be stored like weights or biases when do step() so it's fine :D
 def sigmoid(x: Union[Tensor, Num]) -> Parameter:
     """
     Sigmoid activation function: 1 / (1 + exp(-x))
@@ -15,7 +15,7 @@ def sigmoid(x: Union[Tensor, Num]) -> Parameter:
         Parameter with sigmoid applied
     """
     if not isinstance(x, Tensor):
-        x = Tensor(x, requires_grad=False)
+        x = Tensor(x)
     
     def _sigmoid(val):
         if isinstance(val, list):
@@ -25,7 +25,7 @@ def sigmoid(x: Union[Tensor, Num]) -> Parameter:
     
     sigmoid_val = _sigmoid(x.data)
     
-    out = Parameter(sigmoid_val, requires_grad=x.requires_grad)
+    out = Parameter(sigmoid_val, requires_grad=x.requires_grad) 
     out._prev = {x}
     
     def _backward():
@@ -56,7 +56,7 @@ def relu(x: Union[Tensor, Num]) -> Parameter:
         Parameter with ReLU applied
     """
     if not isinstance(x, Tensor):
-        x = Tensor(x, requires_grad=False)
+        x = Tensor(x)
     
     def _relu(val):
         if isinstance(val, list):

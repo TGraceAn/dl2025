@@ -295,20 +295,126 @@ class Tensor:
         transposed_data = [[self.data[j][i] for j in range(rows)] for i in range(cols)]
         return Tensor(transposed_data)
 
+    def transpose_last_two_dims(self) -> Tensor:
+        """Transpose the last two dimensions of a tensor (for batch matmul)"""
+
+        def transpose_2d(matrix):
+            """Transpose a 2D matrix"""
+            if not matrix:
+                return matrix
+            if not isinstance(matrix[0], list):
+                # Handle 1D case
+                return [[row] for row in matrix]
+            return [[matrix[j][i] for j in range(len(matrix))] for i in range(len(matrix[0]))]
+
+        shape = self.shape
+        if len(shape) < 2:
+            raise ValueError("Need at least 2 dimensions to transpose")
+        
+        def transpose_recursive(data, dims_from_end):
+            if dims_from_end == 2:
+                if not isinstance(data, list) or not isinstance(data[0], list):
+                    raise ValueError("Expected 2D structure at transpose level")
+                return transpose_2d(data)
+            else:
+                # Recurse deeper
+                return [transpose_recursive(item, dims_from_end - 1) for item in data]
+        
+        if len(shape) == 2:
+            return self.transpose()
+        
+        else:
+            transposed_data = transpose_recursive(self.data, len(shape))
+            return Tensor(transposed_data, requires_grad=self.requires_grad)
+
     def __matmul__(self, other: Tensor) -> Tensor:
-        """ Matrix multiplication """
+        """Update matrix with broadcasting support"""
         if not isinstance(other, Tensor):
             other = Tensor(other)
 
-        # Validate shapes
-        if len(self.shape) != 2 or len(other.shape) != 2:
-            raise ValueError("Matrix multiplication is only supported for 2D tensors.")
-        if self.shape[1] != other.shape[0]:
-            raise ValueError(f"Mismatched dimensions for matrix multiplication: {self.shape} and {other.shape}")
+        # Ensure at least 2D tensors
+        if len(self.shape) < 2 or len(other.shape) < 2:
+            raise ValueError("Both tensors must be at least 2-dimensional.")
 
-        # Perform multiplication
-        result_data = [[sum(a * b for a, b in zip(A_row, B_col)) for B_col in zip(*other.data)] for A_row in self.data]
+        a_shape = list(self.shape)
+        b_shape = list(other.shape)
+
+        if a_shape[-1] != b_shape[-2]:
+            raise ValueError(f"Incompatible matrix dimensions: {a_shape[-1]} and {b_shape[-2]}")
+
+        # Pad shapes to same length for broadcasting
+        max_dims = max(len(a_shape), len(b_shape))
+        a_padded = [1] * (max_dims - len(a_shape)) + a_shape
+        b_padded = [1] * (max_dims - len(b_shape)) + b_shape
         
+        # Calculate broadcast batch dimensions
+        batch_shape = []
+        for i in range(max_dims - 2):
+            a_dim, b_dim = a_padded[i], b_padded[i]
+            if a_dim == 1:
+                batch_shape.append(b_dim)
+            elif b_dim == 1:
+                batch_shape.append(a_dim)
+            elif a_dim == b_dim:
+                batch_shape.append(a_dim)
+            else:
+                raise ValueError(f"Cannot broadcast dimensions {a_dim} and {b_dim}")
+        
+        def get_matrix_at_batch(data, batch_idx, original_shape, padded_shape):
+            """Extract 2D matrix at given batch indices with broadcasting"""
+            # Convert batch indices to original tensor indices
+            original_idx = []
+            offset = len(padded_shape) - len(original_shape)
+            
+            for i, idx in enumerate(batch_idx):
+                if i < offset:
+                    continue  # Skip padded dimensions
+                orig_dim = i - offset
+                if orig_dim < len(original_shape) and original_shape[orig_dim] == 1:
+                    original_idx.append(0)  # Broadcast dimension
+                else:
+                    original_idx.append(idx)
+            
+            # Navigate to the matrix
+            current = data
+            for idx in original_idx:
+                current = current[idx]
+            return current
+        
+        def matmul_2d(a_2d, b_2d):
+            """Core 2D matrix multiplication"""
+            rows_a, cols_a = len(a_2d), len(a_2d[0])
+            rows_b, cols_b = len(b_2d), len(b_2d[0])
+            
+            result = []
+            for i in range(rows_a):
+                row = []
+                for j in range(cols_b):
+                    val = sum(a_2d[i][k] * b_2d[k][j] for k in range(cols_a))
+                    row.append(val)
+                result.append(row)
+            return result
+        
+        def build_result(batch_indices):
+            """Recursively build result tensor"""
+            if len(batch_indices) == len(batch_shape):
+                # At leaf level - perform 2D matmul
+                a_2d = get_matrix_at_batch(self.data, batch_indices, a_shape, a_padded)
+                b_2d = get_matrix_at_batch(other.data, batch_indices, b_shape, b_padded)
+                return matmul_2d(a_2d, b_2d)
+            else:
+                # Recurse over current batch dimension
+                current_dim = batch_shape[len(batch_indices)]
+                return [build_result(batch_indices + [i]) for i in range(current_dim)]
+        
+        # Handle different cases
+        if not batch_shape:
+            # Simple 2D case
+            result_data = matmul_2d(self.data, other.data)
+        else:
+            # Batch case
+            result_data = build_result([])
+
         return Tensor(result_data, requires_grad=self.requires_grad or other.requires_grad)
 
 
@@ -532,21 +638,97 @@ class Parameter(Tensor):
         out = Parameter(result_data, requires_grad=self.requires_grad or other.requires_grad)
         out._prev = {self, other}
 
+        # Avoid Tensor in graph, instead use Parameter
         def _backward():
-            # Gradient for self: out.grad @ other.T
-            if self.requires_grad:
-                other_t = other.transpose()
-                grad_self = Parameter(out.grad).__matmul__(other_t)
-                self.grad = _add_gradients(self.grad, grad_self.data)
+            if out.grad is None:
+                return
+                
+            # Handle accumulation of gradients for smaller dim Parameters
+            def _transpose_last_two_dims(data):
+                """Transpose last two dimensions"""
+                if isinstance(data[0], list) and isinstance(data[0][0], list):
+                    return [_transpose_last_two_dims(batch) for batch in data]
+                else:
+                    rows, cols = len(data), len(data[0])
+                    return [[data[j][i] for j in range(rows)] for i in range(cols)]
 
-            # Gradient for other: self.T @ out.grad
+            def _broadcast_matmul_raw(a_data, b_data):
+                """Raw matrix multiplication with broadcasting"""
+                # Create temporary tensors and use existing matmul
+                temp_a = Tensor(a_data)
+                temp_b = Tensor(b_data)
+                result = temp_a.__matmul__(temp_b)
+                return result.data
+            
+            def _reduce_broadcasted_dims(grad_data, target_shape, *other_shapes):
+                """Reduce gradient to match target shape by summing over broadcasted dimensions"""
+
+                def _sum_over_dim(data, dim):
+                    """Sum over specified dimension"""
+                    if dim == 0:
+                        # Sum over first dimension
+                        if not data:
+                            return data
+                        result = data[0]
+                        for i in range(1, len(data)):
+                            result = _elementwise_op(result, data[i], lambda x, y: x + y)
+                        return result
+                    else:
+                        # Recurse into sublists
+                        return [_sum_over_dim(sublist, dim - 1) for sublist in data]
+                
+                def get_shape(data):
+                    if isinstance(data, list):
+                        return [len(data)] + get_shape(data[0]) if data else []
+                    return []
+                
+                grad_shape = get_shape(grad_data)
+                
+                # If shapes match, no reduction needed
+                if grad_shape == list(target_shape):
+                    return grad_data
+                
+                # Find which dimensions need to be reduced
+                # Pad target shape to match grad shape length
+                padded_target = [1] * (len(grad_shape) - len(target_shape)) + list(target_shape)
+                
+                # Identify dimensions
+                dims_to_sum = []
+                for i, (grad_dim, target_dim) in enumerate(zip(grad_shape, padded_target)):
+                    if target_dim == 1 and grad_dim > 1:
+                        dims_to_sum.append(i)
+                
+                # Sum over identified dimensions
+                result = grad_data
+                for dim in sorted(dims_to_sum, reverse=True):  # Sum from last to first
+                    result = _sum_over_dim(result, dim)
+                
+                # Remove leading singleton dimensions if target has fewer dims
+                while len(get_shape(result)) > len(target_shape):
+                    if get_shape(result)[0] == 1:
+                        result = result[0]
+                    else:
+                        break
+                
+                return result
+
+            # Compute gradients for self and other
+            if self.requires_grad:
+                other_t = _transpose_last_two_dims(other.data)
+                grad_self_full = _broadcast_matmul_raw(out.grad, other_t)
+                
+                # Reduce dimensions that were broadcasted in self
+                grad_self = _reduce_broadcasted_dims(grad_self_full, self.shape, out.shape, other.shape)
+                self.grad = _add_gradients(self.grad, grad_self)
+                    
             if other.requires_grad:
-                self_t = self.transpose()
-                grad_other = self_t.__matmul__(Parameter(out.grad))
-                # Ensure other.grad is initialized if it's a non-Parameter tensor
-                if other.grad is None:
-                    other.grad = _zeros_like(other.data)
-                other.grad = _add_gradients(other.grad, grad_other.data)
+                # Compute grad_other = self^T @ out.grad
+                self_t = _transpose_last_two_dims(self.data)
+                grad_other_full = _broadcast_matmul_raw(self_t, out.grad)
+                
+                # Reduce dimensions that were broadcasted in other
+                grad_other = _reduce_broadcasted_dims(grad_other_full, other.shape, self.shape, out.shape)
+                other.grad = _add_gradients(other.grad, grad_other)
         
         out._backward = _backward
         return out

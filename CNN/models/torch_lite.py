@@ -4,49 +4,6 @@ import math
 
 Num = Union[int, float]
 
-# Helper functions
-def _elementwise_op(a, b, op):
-    if isinstance(a, list) and isinstance(b, list):
-        return [_elementwise_op(x, y, op) for x, y in zip(a, b)]
-    elif isinstance(a, list):
-        return [_elementwise_op(x, b, op) for x in a]
-    elif isinstance(b, list):
-        return [_elementwise_op(a, y, op) for y in b]
-    else:
-        return op(a, b)
-    
-def _add_gradients(grad1, grad2):
-    """Add two gradients with same structure"""
-    if grad1 is None:
-        return grad2
-    if grad2 is None:
-        return grad1
-    return _elementwise_op(grad1, grad2, lambda x, y: x + y)
-    
-# Create zeros with same structure as data
-def _zeros_like(data):
-    """Create zeros with same structure as data"""
-    if isinstance(data, list):
-        return [_zeros_like(item) for item in data]
-    else:
-        return 0.0
-
-# Create ones with same structure as data
-def _ones_like(data):
-    """Create ones with same structure as data"""
-    if isinstance(data, list):
-        return [_ones_like(item) for item in data]
-    else:
-        return 1.0
-
-def _sum_recursive(data):
-    """Recursively sum all elements"""
-    if isinstance(data, list):
-        return sum(_sum_recursive(item) for item in data)
-    else:
-        return data
-
-
 class Tensor:
     """Tensor class"""
     def __init__(self, data: Union[Num, List[Num]], requires_grad: bool=False):
@@ -159,14 +116,68 @@ class Tensor:
         return self + other
 
     def __rsub__(self, other: Union[Num, Tensor]) -> Tensor:
-        return Tensor(other, requires_grad=False) - self
+        return Tensor(other) - self
 
     def __rmul__(self, other: Union[Num, Tensor]) -> Tensor:
         return self * other
 
     def __rtruediv__(self, other: Union[Num, Tensor]) -> Tensor:
-        other_tensor = Tensor(other, requires_grad=False)
+        other_tensor = Tensor(other)
         return other_tensor / self
+
+    # Bad code
+    def __setitem__(self, index, value):
+        """Value assignment"""
+        if not isinstance(value, Tensor):
+            value = Tensor(value)
+        
+        def _set_item_recursive(data, indices, val):
+            if not indices:
+                return val
+            if isinstance(indices[0], slice):
+                start, stop, step = indices[0].indices(len(data))
+                if len(indices) == 1:
+                    # Final level
+                    if isinstance(val, list):
+                        for i, idx in enumerate(range(start, stop, step)):
+                            if i < len(val):
+                                data[idx] = val[i]
+                    else:
+                        for idx in range(start, stop, step):
+                            data[idx] = val
+                else:
+                    # Not final
+                    for i, idx in enumerate(range(start, stop, step)):
+                        if isinstance(val, list) and i < len(val):
+                            _set_item_recursive(data[idx], indices[1:], val[i])
+                        else:
+                            _set_item_recursive(data[idx], indices[1:], val)
+            else:
+                if len(indices) == 1:
+                    data[indices[0]] = val
+                else:
+                    _set_item_recursive(data[indices[0]], indices[1:], val)
+        
+        if isinstance(index, tuple):
+            _set_item_recursive(self.data, list(index), value.data)
+        elif isinstance(index, slice):
+            start, stop, step = index.indices(len(self.data))
+            if isinstance(value.data, list):
+                for i, idx in enumerate(range(start, stop, step)):
+                    if i < len(value.data):
+                        self.data[idx] = value.data[i]
+            else:
+                for idx in range(start, stop, step):
+                    self.data[idx] = value.data
+        else:
+            self.data[index] = value.data
+
+    def __iadd__(self, other):
+        if not isinstance(other, Tensor):
+            other = Tensor(other, requires_grad=False)
+        
+        self.data = _elementwise_op(self.data, other.data, lambda x, y: x + y)
+        return self
 
     def sum(self) -> Tensor:
         """Sum all elements in the tensor"""
@@ -205,6 +216,28 @@ class Tensor:
             data = 0.0
         else:
             data = build_zeros(shape)
+        
+        return cls(data, requires_grad=requires_grad)
+
+    @classmethod
+    def ones(cls, shape: Tuple[int, ...], requires_grad: bool = False) -> Tensor:
+        """
+        Create a tensor filled with ones.
+        Args: 
+            shape (Tuple[int, ...]): Shape of the tensor to create
+            requires_grad (bool): If True, the tensor will track gradients
+        Returns:
+            Tensor: A tensor filled with ones of the specified shape
+        """
+        def build_ones(s):
+            if len(s) == 1:
+                return [1.0] * s[0]
+            return [build_ones(s[1:]) for _ in range(s[0])]
+        
+        if len(shape) == 0:
+            data = 0.0
+        else:
+            data = build_ones(shape)
         
         return cls(data, requires_grad=requires_grad)
     
@@ -596,14 +629,34 @@ class Parameter(Tensor):
         return self + other
 
     def __rsub__(self, other: Union[Num, Tensor]) -> Parameter:
-        return Parameter(other, requires_grad=False) - self
+        return Parameter(other) - self
 
     def __rmul__(self, other: Union[Num, Tensor]) -> Parameter:
         return self * other
 
     def __rtruediv__(self, other: Union[Num, Tensor]) -> Parameter:
-        other_param = Parameter(other, requires_grad=False)
+        other_param = Parameter(other)
         return other_param / self
+    
+    def __iadd__(self, other):
+        """Support +="""
+        if not isinstance(other, Tensor):
+            other = Parameter(other)
+        
+        self.data = _elementwise_op(self.data, other.data, lambda x, y: x + y)
+        
+        old_backward = self._backward
+        old_prev = self._prev.copy()
+        
+        def _backward():
+            old_backward()
+            if other.requires_grad and other.grad is not None:
+                other.grad = _add_gradients(other.grad, self.grad) # for addition, grad flows through
+        
+        self._backward = _backward
+        self._prev = old_prev | {other}
+        
+        return self
 
     def sum(self) -> Parameter:
         """Sum all elements in the parameter"""
@@ -755,6 +808,28 @@ class Parameter(Tensor):
         
         return cls(data, requires_grad=requires_grad)
     
+    @classmethod
+    def ones(cls, shape: Tuple[int, ...], requires_grad: bool = True) -> Parameter:
+        """
+        Create a tensor filled with ones.
+        Args: 
+            shape (Tuple[int, ...]): Shape of the tensor to create
+            requires_grad (bool): If True, the tensor will track gradients
+        Returns:
+            Tensor: A tensor filled with ones of the specified shape
+        """
+        def build_ones(s):
+            if len(s) == 1:
+                return [1.0] * s[0]
+            return [build_ones(s[1:]) for _ in range(s[0])]
+        
+        if len(shape) == 0:
+            data = 0.0
+        else:
+            data = build_ones(shape)
+        
+        return cls(data, requires_grad=requires_grad)
+
     def detach(self) -> Tensor:
         """Detach returns a Tensor, not a Parameter"""
         return Tensor(self.data)
@@ -784,3 +859,92 @@ class Parameter(Tensor):
         new_data = self._reshape_flat_to_nested(flat_data, new_shape)
         
         return Parameter(new_data, requires_grad=self.requires_grad)
+    
+    def __setitem__(self, index, value):
+        """Value assignment"""
+        if not isinstance(value, Tensor):
+            value = Parameter(value)
+        
+        def _set_item_recursive(data, indices, val):
+            if not indices:
+                return val
+            if isinstance(indices[0], slice):
+                start, stop, step = indices[0].indices(len(data))
+                if len(indices) == 1:
+                    # Final level
+                    if isinstance(val, list):
+                        for i, idx in enumerate(range(start, stop, step)):
+                            if i < len(val):
+                                data[idx] = val[i]
+                    else:
+                        for idx in range(start, stop, step):
+                            data[idx] = val
+                else:
+                    # Not final
+                    for i, idx in enumerate(range(start, stop, step)):
+                        if isinstance(val, list) and i < len(val):
+                            _set_item_recursive(data[idx], indices[1:], val[i])
+                        else:
+                            _set_item_recursive(data[idx], indices[1:], val)
+            else:
+                if len(indices) == 1:
+                    data[indices[0]] = val
+                else:
+                    _set_item_recursive(data[indices[0]], indices[1:], val)
+        
+        if isinstance(index, tuple):
+            _set_item_recursive(self.data, list(index), value.data)
+        elif isinstance(index, slice):
+            start, stop, step = index.indices(len(self.data))
+            if isinstance(value.data, list):
+                for i, idx in enumerate(range(start, stop, step)):
+                    if i < len(value.data):
+                        self.data[idx] = value.data[i]
+            else:
+                for idx in range(start, stop, step):
+                    self.data[idx] = value.data
+        else:
+            self.data[index] = value.data
+
+
+# Helper functions
+def _elementwise_op(a, b, op):
+    if isinstance(a, list) and isinstance(b, list):
+        return [_elementwise_op(x, y, op) for x, y in zip(a, b)]
+    elif isinstance(a, list):
+        return [_elementwise_op(x, b, op) for x in a]
+    elif isinstance(b, list):
+        return [_elementwise_op(a, y, op) for y in b]
+    else:
+        return op(a, b)
+    
+def _add_gradients(grad1, grad2):
+    """Add gradients for gradient accumulation"""
+    if grad1 is None:
+        return grad2
+    if grad2 is None:
+        return grad1
+    return _elementwise_op(grad1, grad2, lambda x, y: x + y)
+    
+# Create zeros with same structure as data
+def _zeros_like(data):
+    """Create zeros with same structure as data"""
+    if isinstance(data, list):
+        return [_zeros_like(item) for item in data]
+    else:
+        return 0.0
+
+# Create ones with same structure as data
+def _ones_like(data):
+    """Create ones with same structure as data"""
+    if isinstance(data, list):
+        return [_ones_like(item) for item in data]
+    else:
+        return 1.0
+
+def _sum_recursive(data):
+    """Recursively sum all elements"""
+    if isinstance(data, list):
+        return sum(_sum_recursive(item) for item in data)
+    else:
+        return data

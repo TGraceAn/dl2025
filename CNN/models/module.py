@@ -96,7 +96,6 @@ class Convol2D(Module):
         self.weights = Parameter(weights_reshaped.data)
 
         self.biases = Parameter([rng.uniform(-0.5, 0.5) for _ in range(config.out_channels)]) 
-        self.last_input = None
 
     def forward(self, x: Tensor) -> Tensor:
         """
@@ -106,58 +105,65 @@ class Convol2D(Module):
         Returns:
             Output tensor with shape (batch_size, out_channels, height_out, width_out)
         """
-        self.last_input = x
-        batch_size, _, height, width = x.shape
+        batch_size, in_channels, height, width = x.shape
 
+        # Padding if needed
         if self.padding > 0:
-            x_padded = Tensor.zeros((batch_size, self.in_channels,
-                                     height + 2 * self.padding,
-                                     width + 2 * self.padding), requires_grad=x.requires_grad)
-            for b in range(batch_size):
-                for c in range(self.in_channels):
-                    for i in range(height):
-                        for j in range(width):
-                            x_padded.data[b][c][i + self.padding][j + self.padding] = x.data[b][c][i][j]
-        else:
-            x_padded = x
+            pad_batch = batch_size
+            pad_in_channels = in_channels
+            pad_height = height + 2 * self.padding
+            pad_width = width + 2 * self.padding
+            pad_im = Tensor.zeros((pad_batch, pad_in_channels, pad_height, pad_width))
 
-        padded_height = x_padded.shape[2]
-        padded_width = x_padded.shape[3]
+            pad_im[:, :, self.padding:height + self.padding, self.padding:width + self.padding] += x # padded image
+            x = pad_im
+            height, width = pad_height, pad_width
 
-        height_out = (padded_height - self.kernel_size) // self.stride + 1
-        width_out = (padded_width - self.kernel_size) // self.stride + 1
+        height_out = (height - self.kernel_size) // self.stride + 1
+        width_out = (width - self.kernel_size) // self.stride + 1
 
-        output_list = []
-        for b in range(batch_size):
-            batch_list = []
-            for out_c in range(self.out_channels):
-                channel_list = []
-                for i in range(height_out):
-                    row_list = []
-                    for j in range(width_out):
-                        h_start = i * self.stride
-                        w_start = j * self.stride
-                        h_end = h_start + self.kernel_size
-                        w_end = w_start + self.kernel_size
+        patches = self._im2col(x)  # Extract patches that will be used for convolution
+        
+        # (out_channels, in_channels, kernel_size, kernel_size) -> (out_channels, patch_size)
+        patch_size = self.in_channels * self.kernel_size * self.kernel_size
+        weights_2d = self.weights.reshape((self.out_channels, patch_size))
 
-                        conv_sum = Parameter(0.0)
+        # (out_channels, patch_size) @ (batch_size, patch_size, num_patches) -> (batch_size, out_channels, num_patches)
+        conv_result = weights_2d @ patches
 
-                        for in_c in range(self.in_channels):
-                            region = x_padded[b, in_c, h_start:h_end, w_start:w_end]
-                            kernel = Tensor(self.weights.data[out_c][in_c], requires_grad=self.weights.requires_grad)
-                            conv_sum = conv_sum + (region * kernel).sum()
+        bias_expanded = self.biases.reshape((1, self.out_channels, 1))
+        output = conv_result + bias_expanded
 
-                        result = conv_sum + self.biases[out_c]
-                        row_list.append(result.data)
-                    channel_list.append(row_list)
-                batch_list.append(channel_list)
-            output_list.append(batch_list)
+        return output.reshape((batch_size, self.out_channels, height_out, width_out))
 
-        requires_grad = x.requires_grad or self.weights.requires_grad or self.biases.requires_grad
-        return Parameter(output_list, requires_grad=requires_grad)
+    def _im2col(self, x: Tensor) -> Tensor:
+        """
+        Use im2col to extract patches that will be used for convolution.
+        Args:
+            x (Parameter): Input tensor of shape (batch_size, in_channels, height, width)
+        Returns:
+            Tensor: Extracted patches of shape (batch_size, in_channels * kernel_size * kernel_size, num_patches)
+        """
+        batch_size, in_channels, height, width = x.shape
+        kernel_size = self.kernel_size
+        stride = self.stride
 
-    def step(self, lr):
-        pass
+        # Calculate output dimensions
+        height_out = (height - kernel_size) // stride + 1
+        width_out = (width - kernel_size) // stride + 1
+
+        # Create an empty tensor to hold the patches
+        num_patches = height_out * width_out
+        patches = Tensor.zeros((batch_size, in_channels * kernel_size * kernel_size, num_patches))
+
+        for i in range(height_out):
+            for j in range(width_out):
+                h_start = i * stride
+                w_start = j * stride
+                patch = x[:, :, h_start:h_start + kernel_size, w_start:w_start + kernel_size]
+                patches[:, :, i * width_out + j] = patch.reshape(batch_size, -1)
+
+        return patches # (batch_size, in_channels * kernel_size * kernel_size, num_patches)
 
     def __call__(self, x):
         return super().__call__(x)

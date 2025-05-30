@@ -72,7 +72,7 @@ class ModelConfig:
     out_channels: int
     kernel_size: int
     stride: int = 1
-    padding: int = 0
+    padding: int = 1
     
 
 class Convol2D(Module):
@@ -128,6 +128,7 @@ class Convol2D(Module):
         patch_size = self.in_channels * self.kernel_size * self.kernel_size
         weights_2d = self.weights.reshape((self.out_channels, patch_size))
 
+        # TODO: Check error if size doesn't match here
         # (out_channels, patch_size) @ (batch_size, patch_size, num_patches) -> (batch_size, out_channels, num_patches)
         conv_result = weights_2d @ patches
 
@@ -140,9 +141,9 @@ class Convol2D(Module):
         """
         Use im2col to extract patches that will be used for convolution.
         Args:
-            x (Parameter): Input tensor of shape (batch_size, in_channels, height, width)
+            x (Tensor): Input tensor of shape (batch_size, in_channels, height, width)
         Returns:
-            Tensor: Extracted patches of shape (batch_size, in_channels * kernel_size * kernel_size, num_patches)
+            Tensor: Patches of shape (batch_size, in_channels * kernel_size * kernel_size, num_patches)
         """
         batch_size, in_channels, height, width = x.shape
         kernel_size = self.kernel_size
@@ -171,22 +172,33 @@ class Convol2D(Module):
 
 class MaxPooling(Module):
     """Max pooling layer"""
-    def __init__(self, kernel_size: int, stride: int):
+    def __init__(self, config: ModelConfig):
         super().__init__()
-        self.kernel_size = kernel_size
-        self.stride = stride
+        self.kernel_size = config.kernel_size
+        self.stride = config.stride
 
     def forward(self, x):
-        pass
+        """
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, in_channels, height, width)
 
-    def backward(self, x):
-        pass
+        Returns:
+            Output tensor with shape (batch_size, in_channels, height_out, width_out)
+        """
+        batch_size, in_channels, height, width = x.shape
+        height_out = (height - self.kernel_size) // self.stride + 1
+        width_out = (width - self.kernel_size) // self.stride + 1
 
-    def step(self, lr):
-        pass
+        output = Tensor.zeros((batch_size, in_channels, height_out, width_out))
 
-    def zero_grad(self):
-        pass
+        for i in range(height_out):
+            for j in range(width_out):
+                h_start = i * self.stride
+                w_start = j * self.stride
+                patch = x[:, :, h_start:h_start + self.kernel_size, w_start:w_start + self.kernel_size]
+                output[:, :, i, j] = patch.max(axis=(2, 3)).data
+
+        return output
 
 
 class Dense(Module):
@@ -197,15 +209,6 @@ class Dense(Module):
         self.out_features = out_features
 
     def forward(self, x):
-        pass
-
-    def backward(self, x):
-        pass
-
-    def step(self, lr):
-        pass
-
-    def zero_grad(self):
         pass
 
 

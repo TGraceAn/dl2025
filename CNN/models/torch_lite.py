@@ -15,7 +15,34 @@ class Tensor:
     
         self.data: Union[Num, List[Num]] = data
         self.requires_grad: bool = requires_grad
-        self.grad: Optional[Union[Num, List[Num]]] = _zeros_like(data) if requires_grad else None
+        self.grad: Optional[Union[Num, List[Num]]] = _zeros_like(data)
+        self._backward: Callable[[], None] = lambda: None
+        self._prev: Set[Tensor] = set()
+
+    def backward(self):
+        """Compute gradients"""
+        # if leaf has required_grad = False then no need to backpropagate for this whole graph
+        if not self.requires_grad: 
+            return
+        
+        # Build topological order
+        topo = []
+        visited = set()
+
+        def build_topo(t):
+            if t not in visited:
+                visited.add(t)
+                for child in t._prev:
+                    build_topo(child)
+                topo.append(t)
+
+        build_topo(self)
+
+        self.grad = _ones_like(self.data)
+        
+        # Backpropagate
+        for node in reversed(topo):
+            node._backward()
 
     def __getitem__(self, index) -> Tensor:
         """Better indexing support"""
@@ -41,7 +68,7 @@ class Tensor:
         else:
             value = self.data[index]
         
-        return Tensor(value, requires_grad=self.requires_grad)
+        return Tensor(value)
 
     # representation of the Tensor
     def __repr__(self) -> str:
@@ -62,6 +89,13 @@ class Tensor:
         data = _elementwise_op(self.data, other.data, lambda x, y: x + y)
         
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            self.grad = _add_gradients(self.grad, out.grad)
+            other.grad = _add_gradients(other.grad, out.grad)
+        
+        out._backward = _backward
         return out
         
     def __sub__(self, other: Union[Num, Tensor]) -> Tensor:
@@ -70,6 +104,14 @@ class Tensor:
         data = _elementwise_op(self.data, other.data, lambda x, y: x - y)
 
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            self.grad = _add_gradients(self.grad, out.grad)
+            neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
+            other.grad = _add_gradients(other.grad, neg_grad)
+        
+        out._backward = _backward
         return out
         
     def __mul__(self, other: Union[Num, Tensor]) -> Tensor:
@@ -78,6 +120,16 @@ class Tensor:
         data = _elementwise_op(self.data, other.data, lambda x, y: x * y)
         
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            grad_contribution = _elementwise_op(other.data, out.grad, lambda x, y: x * y)
+            self.grad = _add_gradients(self.grad, grad_contribution)
+            
+            grad_contribution = _elementwise_op(self.data, out.grad, lambda x, y: x * y)
+            other.grad = _add_gradients(other.grad, grad_contribution)
+        
+        out._backward = _backward
         return out
         
     def __truediv__(self, other : Union[Num, Tensor]) -> Tensor:
@@ -90,9 +142,23 @@ class Tensor:
         data = _elementwise_op(self.data, other.data, lambda x, y: x / y)
 
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            grad_contribution = _elementwise_op(out.grad, other.data, lambda x, y: x / y)
+            self.grad = _add_gradients(self.grad, grad_contribution)
+            
+            grad_contribution = _elementwise_op(
+                _elementwise_op(out.grad, self.data, lambda x, y: x * y),
+                _elementwise_op(other.data, other.data, lambda x, y: x * y),
+                lambda x, y: -x / y
+            )
+            other.grad = _add_gradients(other.grad, grad_contribution)
+    
+        out._backward = _backward
         return out
 
-    def __pow__(self, other : Union[Num, Tensor]) -> Tensor:
+    def __pow__(self, other: Union[Num, Tensor]) -> Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(other, requires_grad=False)
         
@@ -106,10 +172,41 @@ class Tensor:
         
         data = _elementwise_op(self.data, other.data, lambda x, y: x ** y)
         out = Tensor(data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            grad_contribution = _elementwise_op(
+                _elementwise_op(out.grad, other.data, lambda x, y: x * y),
+                _elementwise_op(self.data, _elementwise_op(other.data, 1, lambda x, y: x - y), lambda x, y: x ** y),
+                lambda x, y: x * y
+            )
+            self.grad = _add_gradients(self.grad, grad_contribution)
+            
+            def compute_other_grad(self_val, other_val, out_grad_val):
+                if self_val > 0:
+                    return out_grad_val * math.log(self_val) * (self_val ** other_val)
+                else:
+                    return 0.0
+            
+            grad_contribution = _elementwise_op(
+                _elementwise_op(self.data, other.data, lambda x, y: (x, y)),
+                out.grad,
+                lambda xy, grad: compute_other_grad(xy[0], xy[1], grad)
+            )
+            other.grad = _add_gradients(other.grad, grad_contribution)
+        
+        out._backward = _backward
         return out
         
     def __neg__(self) -> Tensor:
         out = Tensor(-self.data, requires_grad=self.requires_grad)
+        out._prev = {self}
+
+        def _backward():
+            neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
+            self.grad = _add_gradients(self.grad, neg_grad)
+        
+        out._backward = _backward
         return out
     
     def __radd__(self, other: Union[Num, Tensor]) -> Tensor:
@@ -173,10 +270,22 @@ class Tensor:
             self.data[index] = value.data
 
     def __iadd__(self, other):
+        """Support +="""
         if not isinstance(other, Tensor):
-            other = Tensor(other, requires_grad=False)
+            other = Tensor(other)
         
         self.data = _elementwise_op(self.data, other.data, lambda x, y: x + y)
+        
+        old_backward = self._backward
+        old_prev = self._prev.copy()
+        
+        def _backward():
+            old_backward()
+            other.grad = _add_gradients(other.grad, self.grad)
+        
+        self._backward = _backward
+        self._prev = old_prev | {other}
+        
         return self
 
     def sum(self) -> Tensor:
@@ -184,10 +293,107 @@ class Tensor:
         total = _sum_recursive(self.data)
         
         out = Tensor(total, requires_grad=self.requires_grad)
+        out._prev = {self}
+        
+        def _backward():
+            grad_contribution = _ones_like(self.data)
+            def scale_grad(grad_struct, scale):
+                if isinstance(grad_struct, list):
+                    return [scale_grad(item, scale) for item in grad_struct]
+                else:
+                    return grad_struct * scale
+            
+            scaled_grad = scale_grad(grad_contribution, out.grad)
+            self.grad = _add_gradients(self.grad, scaled_grad)
+
+        out._backward = _backward
+        return out
+
+    def __matmul__(self, other: Tensor) -> Tensor:
+        """ Matrix multiplication with gradient tracking. """
+        if not isinstance(other, Tensor):
+            other = Tensor(other)
+        
+        # Forward pass using parent class matmul
+        result_data = super(Tensor, self).__matmul__(other).data
+        
+        out = Tensor(result_data, requires_grad=self.requires_grad or other.requires_grad)
+        out._prev = {self, other}
+
+        def _backward():
+            def _transpose_last_two_dims(data):
+                """Transpose last two dimensions"""
+                if isinstance(data[0], list) and isinstance(data[0][0], list):
+                    return [_transpose_last_two_dims(batch) for batch in data]
+                else:
+                    rows, cols = len(data), len(data[0])
+                    return [[data[j][i] for j in range(rows)] for i in range(cols)]
+
+            def _broadcast_matmul_raw(a_data, b_data):
+                """Raw matrix multiplication with broadcasting"""
+                temp_a = Tensor(a_data)
+                temp_b = Tensor(b_data)
+                result = temp_a.__matmul__(temp_b)
+                return result.data
+            
+            def _reduce_broadcasted_dims(grad_data, target_shape, *other_shapes):
+                """Reduce gradient to match target shape by summing over broadcasted dimensions"""
+                def _sum_over_dim(data, dim):
+                    """Sum over specified dimension"""
+                    if dim == 0:
+                        if not data:
+                            return data
+                        result = data[0]
+                        for i in range(1, len(data)):
+                            result = _elementwise_op(result, data[i], lambda x, y: x + y)
+                        return result
+                    else:
+                        return [_sum_over_dim(sublist, dim - 1) for sublist in data]
+                
+                def get_shape(data):
+                    if isinstance(data, list):
+                        return [len(data)] + get_shape(data[0]) if data else []
+                    return []
+                
+                grad_shape = get_shape(grad_data)
+                
+                if grad_shape == list(target_shape):
+                    return grad_data
+                
+                padded_target = [1] * (len(grad_shape) - len(target_shape)) + list(target_shape)
+                
+                dims_to_sum = []
+                for i, (grad_dim, target_dim) in enumerate(zip(grad_shape, padded_target)):
+                    if target_dim == 1 and grad_dim > 1:
+                        dims_to_sum.append(i)
+                
+                result = grad_data
+                for dim in sorted(dims_to_sum, reverse=True):
+                    result = _sum_over_dim(result, dim)
+                
+                while len(get_shape(result)) > len(target_shape):
+                    if get_shape(result)[0] == 1:
+                        result = result[0]
+                    else:
+                        break
+                
+                return result
+
+            other_t = _transpose_last_two_dims(other.data)
+            grad_self_full = _broadcast_matmul_raw(out.grad, other_t)
+            grad_self = _reduce_broadcasted_dims(grad_self_full, self.shape, out.shape, other.shape)
+            self.grad = _add_gradients(self.grad, grad_self)
+                
+            self_t = _transpose_last_two_dims(self.data)
+            grad_other_full = _broadcast_matmul_raw(self_t, out.grad)
+            grad_other = _reduce_broadcasted_dims(grad_other_full, other.shape, self.shape, out.shape)
+            other.grad = _add_gradients(other.grad, grad_other)
+        
+        out._backward = _backward
         return out
 
     def detach(self) -> Tensor:
-        return Tensor(self.data, requires_grad=False)
+        return Tensor(self.data)
 
     def clone(self) -> Tensor:
         return Tensor(self.data, requires_grad=self.requires_grad)
@@ -360,551 +566,11 @@ class Tensor:
             transposed_data = transpose_recursive(self.data, len(shape))
             return Tensor(transposed_data, requires_grad=self.requires_grad)
 
-    def __matmul__(self, other: Tensor) -> Tensor:
-        """Update matrix with broadcasting support"""
-        if not isinstance(other, Tensor):
-            other = Tensor(other)
-
-        # Ensure at least 2D tensors
-        if len(self.shape) < 2 or len(other.shape) < 2:
-            raise ValueError("Both tensors must be at least 2-dimensional.")
-
-        a_shape = list(self.shape)
-        b_shape = list(other.shape)
-
-        if a_shape[-1] != b_shape[-2]:
-            raise ValueError(f"Incompatible matrix dimensions: {a_shape[-1]} and {b_shape[-2]}")
-
-        # Pad shapes to same length for broadcasting
-        max_dims = max(len(a_shape), len(b_shape))
-        a_padded = [1] * (max_dims - len(a_shape)) + a_shape
-        b_padded = [1] * (max_dims - len(b_shape)) + b_shape
-        
-        # Calculate broadcast batch dimensions
-        batch_shape = []
-        for i in range(max_dims - 2):
-            a_dim, b_dim = a_padded[i], b_padded[i]
-            if a_dim == 1:
-                batch_shape.append(b_dim)
-            elif b_dim == 1:
-                batch_shape.append(a_dim)
-            elif a_dim == b_dim:
-                batch_shape.append(a_dim)
-            else:
-                raise ValueError(f"Cannot broadcast dimensions {a_dim} and {b_dim}")
-        
-        def get_matrix_at_batch(data, batch_idx, original_shape, padded_shape):
-            """Extract 2D matrix at given batch indices with broadcasting"""
-            # Convert batch indices to original tensor indices
-            original_idx = []
-            offset = len(padded_shape) - len(original_shape)
-            
-            for i, idx in enumerate(batch_idx):
-                if i < offset:
-                    continue  # Skip padded dimensions
-                orig_dim = i - offset
-                if orig_dim < len(original_shape) and original_shape[orig_dim] == 1:
-                    original_idx.append(0)  # Broadcast dimension
-                else:
-                    original_idx.append(idx)
-            
-            # Navigate to the matrix
-            current = data
-            for idx in original_idx:
-                current = current[idx]
-            return current
-        
-        def matmul_2d(a_2d, b_2d):
-            """Core 2D matrix multiplication"""
-            rows_a, cols_a = len(a_2d), len(a_2d[0])
-            rows_b, cols_b = len(b_2d), len(b_2d[0])
-            
-            result = []
-            for i in range(rows_a):
-                row = []
-                for j in range(cols_b):
-                    val = sum(a_2d[i][k] * b_2d[k][j] for k in range(cols_a))
-                    row.append(val)
-                result.append(row)
-            return result
-        
-        def build_result(batch_indices):
-            """Recursively build result tensor"""
-            if len(batch_indices) == len(batch_shape):
-                # At leaf level - perform 2D matmul
-                a_2d = get_matrix_at_batch(self.data, batch_indices, a_shape, a_padded)
-                b_2d = get_matrix_at_batch(other.data, batch_indices, b_shape, b_padded)
-                return matmul_2d(a_2d, b_2d)
-            else:
-                # Recurse over current batch dimension
-                current_dim = batch_shape[len(batch_indices)]
-                return [build_result(batch_indices + [i]) for i in range(current_dim)]
-        
-        # Handle different cases
-        if not batch_shape:
-            # Simple 2D case
-            result_data = matmul_2d(self.data, other.data)
-        else:
-            # Batch case
-            result_data = build_result([])
-
-        return Tensor(result_data, requires_grad=self.requires_grad or other.requires_grad)
-
 
 class Parameter(Tensor):
-    """Parameter class that inherits from Tensor"""
+    """New Param only requres_grad=True by default for now"""
     def __init__(self, data: Union[Num, List[Num]], requires_grad: bool = True):
-        """
-        Args:
-            data (Union[Num, List[Num]]): Data to store
-            requires_grad (bool): If True, the parameter will track gradients (default: True)
-        """
         super().__init__(data, requires_grad=requires_grad)
-        self._backward: Callable[[], None] = lambda: None
-        self._prev: Set[Tensor] = set()
-    
-    def __repr__(self) -> str:
-        return f"Parameter({self.data})"
-    
-    def backward(self):
-        """Compute gradients"""
-        if not self.requires_grad: # Too lazy to check if the tensor is a leaf node
-            return
-        
-        # Build topological order
-        topo = []
-        visited = set()
-
-        def build_topo(t):
-            if t not in visited:
-                visited.add(t)
-                for child in t._prev:
-                    build_topo(child)
-                topo.append(t)
-
-        build_topo(self)
-
-        self.grad = _ones_like(self.data)
-        
-        # Backpropagate
-        for node in reversed(topo):
-            node._backward()
-
-    ## Override operators to support gradient computation ##
-    def __add__(self, other: Union[Num, Tensor]) -> Parameter:
-        if not isinstance(other, Tensor):
-            other = Tensor(other, requires_grad=False)
-        data = _elementwise_op(self.data, other.data, lambda x, y: x + y)
-        
-        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                self.grad = _add_gradients(self.grad, out.grad)
-            if other.requires_grad and other.grad is not None:
-                other.grad = _add_gradients(other.grad, out.grad)
-        
-        out._backward = _backward
-        return out
-        
-    def __sub__(self, other: Union[Num, Tensor]) -> Parameter:
-        if not isinstance(other, Tensor):
-            other = Tensor(other, requires_grad=False)
-        data = _elementwise_op(self.data, other.data, lambda x, y: x - y)
-
-        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                self.grad = _add_gradients(self.grad, out.grad)
-            if other.requires_grad and other.grad is not None:
-                neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
-                other.grad = _add_gradients(other.grad, neg_grad)
-        
-        out._backward = _backward
-        return out
-        
-    def __mul__(self, other: Union[Num, Tensor]) -> Parameter:
-        if not isinstance(other, Tensor):
-            other = Tensor(other, requires_grad=False)
-        data = _elementwise_op(self.data, other.data, lambda x, y: x * y)
-        
-        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                grad_contribution = _elementwise_op(other.data, out.grad, lambda x, y: x * y)
-                self.grad = _add_gradients(self.grad, grad_contribution)
-            if other.requires_grad and other.grad is not None:
-                grad_contribution = _elementwise_op(self.data, out.grad, lambda x, y: x * y)
-                other.grad = _add_gradients(other.grad, grad_contribution)
-        
-        out._backward = _backward
-        return out
-        
-    def __truediv__(self, other : Union[Num, Tensor]) -> Parameter:
-        if not isinstance(other, Tensor):
-            other = Tensor(other, requires_grad=False)
-        
-        # Check for division by zero
-        if other.data == 0:
-            raise ZeroDivisionError("Division by zero in tensor operation")
-        data = _elementwise_op(self.data, other.data, lambda x, y: x / y)
-
-        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                grad_contribution = _elementwise_op(out.grad, other.data, lambda x, y: x / y)
-                self.grad = _add_gradients(self.grad, grad_contribution)
-            if other.requires_grad and other.grad is not None:
-                grad_contribution = _elementwise_op(
-                _elementwise_op(out.grad, self.data, lambda x, y: x * y),
-                _elementwise_op(other.data, other.data, lambda x, y: x * y),
-                lambda x, y: -x / y
-            )
-            other.grad = _add_gradients(other.grad, grad_contribution)
-           
-        out._backward = _backward
-        return out
-
-    def __pow__(self, other : Union[Num, Tensor]) -> Parameter:
-        if not isinstance(other, Tensor):
-            other = Tensor(other, requires_grad=False)
-        
-        # Check for problematic cases
-        if self.data == 0 and other.data < 0:
-            raise ZeroDivisionError("Cannot raise 0 to a negative power")
-        if self.data < 0 and not isinstance(other.data, int):
-            raise ValueError("Cannot raise negative number to non-integer power")
-        if self.data == 0 and other.data == 0:
-            raise ValueError("0^0 is undefined")
-        
-        data = _elementwise_op(self.data, other.data, lambda x, y: x ** y)
-        out = Parameter(data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                grad_contribution = _elementwise_op(
-                    _elementwise_op(out.grad, other.data, lambda x, y: x * y),
-                    _elementwise_op(self.data, _elementwise_op(other.data, 1, lambda x, y: x - y), lambda x, y: x ** y),
-                    lambda x, y: x * y
-                )
-                self.grad = _add_gradients(self.grad, grad_contribution)
-            if other.requires_grad and other.grad is not None:
-                def compute_other_grad(self_val, other_val, out_grad_val):
-                    if self_val > 0:
-                        return out_grad_val * math.log(self_val) * (self_val ** other_val)
-                    else:
-                        return 0.0
-                
-                grad_contribution = _elementwise_op(
-                    _elementwise_op(self.data, other.data, lambda x, y: (x, y)),
-                    out.grad,
-                    lambda xy, grad: compute_other_grad(xy[0], xy[1], grad)
-                )
-                other.grad = _add_gradients(other.grad, grad_contribution)
-        
-        out._backward = _backward
-        return out
-        
-    def __neg__(self) -> Parameter:
-        out = Parameter(-self.data, requires_grad=self.requires_grad)
-        out._prev = {self}
-
-        def _backward():
-            if self.requires_grad and self.grad is not None:
-                neg_grad = _elementwise_op(out.grad, -1, lambda x, y: x * y)
-                self.grad = _add_gradients(self.grad, neg_grad)
-        
-        out._backward = _backward
-        return out
-    
-    def __radd__(self, other: Union[Num, Tensor]) -> Parameter:
-        return self + other
-
-    def __rsub__(self, other: Union[Num, Tensor]) -> Parameter:
-        return Parameter(other) - self
-
-    def __rmul__(self, other: Union[Num, Tensor]) -> Parameter:
-        return self * other
-
-    def __rtruediv__(self, other: Union[Num, Tensor]) -> Parameter:
-        other_param = Parameter(other)
-        return other_param / self
-    
-    def __iadd__(self, other):
-        """Support +="""
-        if not isinstance(other, Tensor):
-            other = Parameter(other)
-        
-        self.data = _elementwise_op(self.data, other.data, lambda x, y: x + y)
-        
-        old_backward = self._backward
-        old_prev = self._prev.copy()
-        
-        def _backward():
-            old_backward()
-            if other.requires_grad and other.grad is not None:
-                other.grad = _add_gradients(other.grad, self.grad) # for addition, grad flows through
-        
-        self._backward = _backward
-        self._prev = old_prev | {other}
-        
-        return self
-
-    def sum(self) -> Parameter:
-        """Sum all elements in the parameter"""
-        total = _sum_recursive(self.data)
-        
-        out = Parameter(total, requires_grad=self.requires_grad)
-        out._prev = {self}
-        
-        def _backward():
-            if self.requires_grad:
-                grad_contribution = _ones_like(self.data)
-                def scale_grad(grad_struct, scale):
-                    if isinstance(grad_struct, list):
-                        return [scale_grad(item, scale) for item in grad_struct]
-                    else:
-                        return grad_struct * scale
-                
-                scaled_grad = scale_grad(grad_contribution, out.grad)
-                self.grad = _add_gradients(self.grad, scaled_grad)
-
-        out._backward = _backward
-        return out
-        
-    def __matmul__(self, other: Tensor) -> Parameter:
-        """ Matrix multiplication with gradient tracking. """
-        if not isinstance(other, Tensor):
-            other = Tensor(other)
-        
-        # Forward pass is the same as the parent class
-        result_data = super().__matmul__(other).data
-        
-        out = Parameter(result_data, requires_grad=self.requires_grad or other.requires_grad)
-        out._prev = {self, other}
-
-        # Avoid Tensor in graph, instead use Parameter
-        def _backward():
-            if out.grad is None:
-                return
-                
-            # Handle accumulation of gradients for smaller dim Parameters
-            def _transpose_last_two_dims(data):
-                """Transpose last two dimensions"""
-                if isinstance(data[0], list) and isinstance(data[0][0], list):
-                    return [_transpose_last_two_dims(batch) for batch in data]
-                else:
-                    rows, cols = len(data), len(data[0])
-                    return [[data[j][i] for j in range(rows)] for i in range(cols)]
-
-            def _broadcast_matmul_raw(a_data, b_data):
-                """Raw matrix multiplication with broadcasting"""
-                # Create temporary tensors and use existing matmul
-                temp_a = Tensor(a_data)
-                temp_b = Tensor(b_data)
-                result = temp_a.__matmul__(temp_b)
-                return result.data
-            
-            def _reduce_broadcasted_dims(grad_data, target_shape, *other_shapes):
-                """Reduce gradient to match target shape by summing over broadcasted dimensions"""
-
-                def _sum_over_dim(data, dim):
-                    """Sum over specified dimension"""
-                    if dim == 0:
-                        # Sum over first dimension
-                        if not data:
-                            return data
-                        result = data[0]
-                        for i in range(1, len(data)):
-                            result = _elementwise_op(result, data[i], lambda x, y: x + y)
-                        return result
-                    else:
-                        # Recurse into sublists
-                        return [_sum_over_dim(sublist, dim - 1) for sublist in data]
-                
-                def get_shape(data):
-                    if isinstance(data, list):
-                        return [len(data)] + get_shape(data[0]) if data else []
-                    return []
-                
-                grad_shape = get_shape(grad_data)
-                
-                # If shapes match, no reduction needed
-                if grad_shape == list(target_shape):
-                    return grad_data
-                
-                # Find which dimensions need to be reduced
-                # Pad target shape to match grad shape length
-                padded_target = [1] * (len(grad_shape) - len(target_shape)) + list(target_shape)
-                
-                # Identify dimensions
-                dims_to_sum = []
-                for i, (grad_dim, target_dim) in enumerate(zip(grad_shape, padded_target)):
-                    if target_dim == 1 and grad_dim > 1:
-                        dims_to_sum.append(i)
-                
-                # Sum over identified dimensions
-                result = grad_data
-                for dim in sorted(dims_to_sum, reverse=True):  # Sum from last to first
-                    result = _sum_over_dim(result, dim)
-                
-                # Remove leading singleton dimensions if target has fewer dims
-                while len(get_shape(result)) > len(target_shape):
-                    if get_shape(result)[0] == 1:
-                        result = result[0]
-                    else:
-                        break
-                
-                return result
-
-            # Compute gradients for self and other
-            if self.requires_grad:
-                other_t = _transpose_last_two_dims(other.data)
-                grad_self_full = _broadcast_matmul_raw(out.grad, other_t)
-                
-                # Reduce dimensions that were broadcasted in self
-                grad_self = _reduce_broadcasted_dims(grad_self_full, self.shape, out.shape, other.shape)
-                self.grad = _add_gradients(self.grad, grad_self)
-                    
-            if other.requires_grad:
-                # Compute grad_other = self^T @ out.grad
-                self_t = _transpose_last_two_dims(self.data)
-                grad_other_full = _broadcast_matmul_raw(self_t, out.grad)
-                
-                # Reduce dimensions that were broadcasted in other
-                grad_other = _reduce_broadcasted_dims(grad_other_full, other.shape, self.shape, out.shape)
-                other.grad = _add_gradients(other.grad, grad_other)
-        
-        out._backward = _backward
-        return out
-    
-    @classmethod
-    def zeros(cls, shape: Tuple[int, ...], requires_grad: bool = True) -> Parameter:
-        """
-        Create a parameter filled with zeros.
-        Args: 
-            shape (Tuple[int, ...]): Shape of the parameter to create
-            requires_grad (bool): If True, the parameter will track gradients (default: True)
-        Returns:
-            Parameter: A parameter filled with zeros of the specified shape
-        """
-        def build_zeros(s):
-            if len(s) == 1:
-                return [0.0] * s[0]
-            return [build_zeros(s[1:]) for _ in range(s[0])]
-        
-        if len(shape) == 0:
-            data = 0.0
-        else:
-            data = build_zeros(shape)
-        
-        return cls(data, requires_grad=requires_grad)
-    
-    @classmethod
-    def ones(cls, shape: Tuple[int, ...], requires_grad: bool = True) -> Parameter:
-        """
-        Create a tensor filled with ones.
-        Args: 
-            shape (Tuple[int, ...]): Shape of the tensor to create
-            requires_grad (bool): If True, the tensor will track gradients
-        Returns:
-            Tensor: A tensor filled with ones of the specified shape
-        """
-        def build_ones(s):
-            if len(s) == 1:
-                return [1.0] * s[0]
-            return [build_ones(s[1:]) for _ in range(s[0])]
-        
-        if len(shape) == 0:
-            data = 0.0
-        else:
-            data = build_ones(shape)
-        
-        return cls(data, requires_grad=requires_grad)
-
-    def detach(self) -> Tensor:
-        """Detach returns a Tensor, not a Parameter"""
-        return Tensor(self.data)
-    
-    def clone(self) -> Parameter:
-        """Clone returns a Parameter"""
-        return Parameter(self.data, requires_grad=self.requires_grad)
-    
-    # Override flatten to return Parameter
-    def flatten(self) -> Parameter:
-        flat_data = self._flatten_recursive(self.data)
-        return Parameter(flat_data, requires_grad=self.requires_grad)
-    
-    def reshape(self, new_shape: Tuple[int, ...]) -> Parameter:
-        current_elements = 1
-        for dim in self.shape:
-            current_elements *= dim
-
-        new_elements = 1
-        for dim in new_shape:
-            new_elements *= dim
-        
-        if current_elements != new_elements:
-            raise ValueError(f"Cannot reshape parameter of size {current_elements} to shape {new_shape} (size {new_elements})")
-        
-        flat_data = self._flatten_recursive(self.data)
-        new_data = self._reshape_flat_to_nested(flat_data, new_shape)
-        
-        return Parameter(new_data, requires_grad=self.requires_grad)
-    
-    def __setitem__(self, index, value):
-        """Value assignment"""
-        if not isinstance(value, Tensor):
-            value = Parameter(value)
-        
-        def _set_item_recursive(data, indices, val):
-            if not indices:
-                return val
-            if isinstance(indices[0], slice):
-                start, stop, step = indices[0].indices(len(data))
-                if len(indices) == 1:
-                    # Final level
-                    if isinstance(val, list):
-                        for i, idx in enumerate(range(start, stop, step)):
-                            if i < len(val):
-                                data[idx] = val[i]
-                    else:
-                        for idx in range(start, stop, step):
-                            data[idx] = val
-                else:
-                    # Not final
-                    for i, idx in enumerate(range(start, stop, step)):
-                        if isinstance(val, list) and i < len(val):
-                            _set_item_recursive(data[idx], indices[1:], val[i])
-                        else:
-                            _set_item_recursive(data[idx], indices[1:], val)
-            else:
-                if len(indices) == 1:
-                    data[indices[0]] = val
-                else:
-                    _set_item_recursive(data[indices[0]], indices[1:], val)
-        
-        if isinstance(index, tuple):
-            _set_item_recursive(self.data, list(index), value.data)
-        elif isinstance(index, slice):
-            start, stop, step = index.indices(len(self.data))
-            if isinstance(value.data, list):
-                for i, idx in enumerate(range(start, stop, step)):
-                    if i < len(value.data):
-                        self.data[idx] = value.data[i]
-            else:
-                for idx in range(start, stop, step):
-                    self.data[idx] = value.data
-        else:
-            self.data[index] = value.data
 
 
 # Helper functions

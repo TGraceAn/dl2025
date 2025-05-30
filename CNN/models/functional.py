@@ -1,10 +1,9 @@
 from __future__ import annotations
 import math
-from torch_lite import Tensor, Parameter, Num, _add_gradients, _elementwise_op
+from torch_lite import Tensor, Num, _add_gradients, _elementwise_op
 from typing import Union
 
-# Even when out is param it won't be stored like weights or biases when do step() so it's fine :D
-def sigmoid(x: Union[Tensor, Num]) -> Parameter:
+def sigmoid(x: Union[Tensor, Num]) -> Tensor:
     """
     Sigmoid activation function: 1 / (1 + exp(-x))
     
@@ -12,7 +11,7 @@ def sigmoid(x: Union[Tensor, Num]) -> Parameter:
         x: Input tensor or number
 
     Returns:
-        Parameter with sigmoid applied
+        Tensor with sigmoid applied
     """
     if not isinstance(x, Tensor):
         x = Tensor(x)
@@ -25,27 +24,26 @@ def sigmoid(x: Union[Tensor, Num]) -> Parameter:
     
     sigmoid_val = _sigmoid(x.data)
     
-    out = Parameter(sigmoid_val, requires_grad=x.requires_grad) 
+    out = Tensor(sigmoid_val, requires_grad=x.requires_grad) 
     out._prev = {x}
     
     def _backward():
-        if x.requires_grad and x.grad is not None:
-            # Gradient of sigmoid: sigmoid(x) * (1 - sigmoid(x))
-            def _sigmoid_grad(sig_val):
-                if isinstance(sig_val, list):
-                    return [_sigmoid_grad(item) for item in sig_val]
-                else:
-                    return sig_val * (1.0 - sig_val)
-            
-            sigmoid_grad = _sigmoid_grad(sigmoid_val)
-            grad_contribution = _elementwise_op(out.grad, sigmoid_grad, lambda x, y: x * y)
-            x.grad = _add_gradients(x.grad, grad_contribution)
+        # Gradient of sigmoid: sigmoid(x) * (1 - sigmoid(x))
+        def _sigmoid_grad(sig_val):
+            if isinstance(sig_val, list):
+                return [_sigmoid_grad(item) for item in sig_val]
+            else:
+                return sig_val * (1.0 - sig_val)
+        
+        sigmoid_grad = _sigmoid_grad(sigmoid_val)
+        grad_contribution = _elementwise_op(out.grad, sigmoid_grad, lambda x, y: x * y)
+        x.grad = _add_gradients(x.grad, grad_contribution)
     
     out._backward = _backward
     return out
 
 
-def relu(x: Union[Tensor, Num]) -> Parameter:
+def relu(x: Union[Tensor, Num]) -> Tensor:
     """
     ReLU activation function: max(0, x)
     
@@ -53,7 +51,7 @@ def relu(x: Union[Tensor, Num]) -> Parameter:
         x: Input tensor or number
         
     Returns:
-        Parameter with ReLU applied
+        Tensor with ReLU applied
     """
     if not isinstance(x, Tensor):
         x = Tensor(x)
@@ -66,27 +64,26 @@ def relu(x: Union[Tensor, Num]) -> Parameter:
     
     relu_val = _relu(x.data)
     
-    out = Parameter(relu_val, requires_grad=x.requires_grad)
+    out = Tensor(relu_val, requires_grad=x.requires_grad)
     out._prev = {x}
     
     def _backward():
-        if x.requires_grad and x.grad is not None:
-            # Gradient of ReLU: 1 if x > 0 else 0
-            def _relu_grad(orig_val):
-                if isinstance(orig_val, list):
-                    return [_relu_grad(item) for item in orig_val]
-                else:
-                    return 1.0 if orig_val > 0 else 0.0
-            
-            relu_grad = _relu_grad(x.data)
-            grad_contribution = _elementwise_op(out.grad, relu_grad, lambda x, y: x * y)
-            x.grad = _add_gradients(x.grad, grad_contribution)
+        # Gradient of ReLU: 1 if x > 0 else 0
+        def _relu_grad(orig_val):
+            if isinstance(orig_val, list):
+                return [_relu_grad(item) for item in orig_val]
+            else:
+                return 1.0 if orig_val > 0 else 0.0
+        
+        relu_grad = _relu_grad(x.data)
+        grad_contribution = _elementwise_op(out.grad, relu_grad, lambda x, y: x * y)
+        x.grad = _add_gradients(x.grad, grad_contribution)
     
     out._backward = _backward
     return out
 
 
-def tanh(x: Union[Tensor, Num]) -> Parameter:
+def tanh(x: Union[Tensor, Num]) -> Tensor:
     """
     Tanh activation function: (exp(x) - exp(-x)) / (exp(x) + exp(-x))
     
@@ -94,7 +91,7 @@ def tanh(x: Union[Tensor, Num]) -> Parameter:
         x: Input tensor or number
         
     Returns:
-        Parameter with tanh applied
+        Tensor with tanh applied
     """
     if not isinstance(x, Tensor):
         x = Tensor(x, requires_grad=False)
@@ -107,21 +104,19 @@ def tanh(x: Union[Tensor, Num]) -> Parameter:
     
     tanh_val = _tanh(x.data)
     
-    out = Parameter(tanh_val, requires_grad=x.requires_grad)
+    out = Tensor(tanh_val, requires_grad=x.requires_grad)
     out._prev = {x}
     
     def _backward():
-        if x.requires_grad and x.grad is not None:
-            # Gradient of tanh: 1 - tanh^2(x)
-            def _tanh_grad(tanh_result):
-                if isinstance(tanh_result, list):
-                    return [_tanh_grad(item) for item in tanh_result]
-                else:
-                    return 1.0 - tanh_result ** 2
-            
-            tanh_grad = _tanh_grad(tanh_val)
-            grad_contribution = _elementwise_op(out.grad, tanh_grad, lambda x, y: x * y)
-            x.grad = _add_gradients(x.grad, grad_contribution)
+        def _tanh_grad(tanh_result):
+            if isinstance(tanh_result, list):
+                return [_tanh_grad(item) for item in tanh_result]
+            else:
+                return 1.0 - tanh_result ** 2
+        
+        tanh_grad = _tanh_grad(tanh_val)
+        grad_contribution = _elementwise_op(out.grad, tanh_grad, lambda x, y: x * y)
+        x.grad = _add_gradients(x.grad, grad_contribution)
     
     out._backward = _backward
     return out

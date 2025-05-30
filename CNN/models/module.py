@@ -93,8 +93,8 @@ class Convol2D(Module):
         flat_weights = [rng.normal(0, std) for _ in range(total_elements)]
         weights_tensor = Tensor(flat_weights)
         weights_reshaped = weights_tensor.reshape((config.out_channels, config.in_channels, config.kernel_size, config.kernel_size))
+        
         self.weights = Parameter(weights_reshaped.data)
-
         self.biases = Parameter([rng.uniform(-0.5, 0.5) for _ in range(config.out_channels)]) 
 
     def forward(self, x: Tensor) -> Tensor:
@@ -166,9 +166,6 @@ class Convol2D(Module):
 
         return patches # (batch_size, in_channels * kernel_size * kernel_size, num_patches)
 
-    def __call__(self, x):
-        return super().__call__(x)
-
 
 class MaxPooling(Module):
     """Max pooling layer"""
@@ -196,20 +193,84 @@ class MaxPooling(Module):
                 h_start = i * self.stride
                 w_start = j * self.stride
                 patch = x[:, :, h_start:h_start + self.kernel_size, w_start:w_start + self.kernel_size]
-                output[:, :, i, j] = patch.max(axis=(2, 3)).data
+                output[:, :, i, j] = patch.data.max(axis=(2, 3))
 
         return output
 
 
-class Dense(Module):
-    """Dense layer"""
-    def __init__(self, in_features: int, out_features: int):
+class Flatten(Module):
+    """Flatten layer"""
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x (Tensor): Input for this (batch_size, in_channels, height_out, width_out)
+        
+        Returns:
+            Tensor: Flattened tensor of shape (batch_size, flattened_features)
+        """
+        batch_size = x.shape[0]
+        
+        # Calculate total number of features per sample
+        total_features = 1
+        for dim in x.shape[1:]:  # Skip batch
+            total_features *= dim
+        
+        # Flatten each sample in the batch
+        flattened_data = []
+        for i in range(batch_size):
+            sample = x[i]  # Get individual sample
+            flat_sample = sample.flatten()  # Flatten the sample
+            flattened_data.append(flat_sample.data) # Append for each batch sample
+        
+        return Tensor(flattened_data, requires_grad=x.requires_grad)
+
+
+class Linear(Module):
+    """Linear/Dense/FC layer"""
+    def __init__(self, in_features: int, out_features: int, bias:bool=True):
+        """
+        Args:
+            in_features (int): Number of input features
+            out_features (int): Number of output features
+            bias (bool): Use bias or not
+        """
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
+        self.bias = bias
+        
+        std = math.sqrt(2.0 / (in_features + out_features))
+
+        weight_data = []
+        for i in range(out_features):
+            row = [rng.normal(0, std) for _ in range(in_features)]
+            weight_data.append(row)
+        
+        self.weights = Parameter(weight_data)
+
+        bias_data = [rng.uniform(-0.1, 0.1) for _ in range(out_features)]
+        self.bias = Parameter(bias_data)
 
     def forward(self, x):
-        pass
+        """
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, in_features)
+
+        Returns:
+            Output tensor with shape (batch_size, out_features)
+        """
+        batch_size, in_features = x.shape
+        assert in_features == self.in_features, f"Input features {in_features} do not match layer's in_features {self.in_features}"
+        
+        output = x @ self.weights.transpose() # (batch_size, in_features) @ (in_features, out_features) -> (batch_size, out_features)
+
+        if self.bias:
+            output = output + self.bias
+
+        return output
 
 
 # Optimizer stuff #

@@ -566,6 +566,44 @@ class Tensor:
             transposed_data = transpose_recursive(self.data, len(shape))
             return Tensor(transposed_data, requires_grad=self.requires_grad)
 
+    def max(self, axis: Optional[Union[Tuple[int], int]]=None) -> Tensor:
+        if axis is None:
+            # max value in all
+            flat_data = self._flatten_recursive(self.data)
+            return Tensor(max(flat_data))
+        
+        if isinstance(axis, tuple):
+            result = self.max(axis=axis[-1])
+            if len(axis) > 1:
+                return result.max(axis=axis[:-1])
+            return result
+        
+        if axis < 0:
+            axis = len(self.shape) + axis
+        
+        if axis >= len(self.shape):
+            raise ValueError(f"Axis {axis} is out of bounds for tensor of dimension {len(self.shape)}")
+        
+        def _max_along_axis(data, current_axis, target_axis):
+            if current_axis == target_axis:
+                if not data:
+                    return None
+                max_val = data[0]
+                for val in data[1:]:
+                    if isinstance(val, list):
+                        max_val = _elementwise_op(max_val, val, lambda x, y: x if x > y else y)
+                    else:
+                        max_val = max_val if max_val > val else val
+                return max_val
+            else:
+                if not data:
+                    return []
+                if not isinstance(data[0], list):
+                    return data
+                return [_max_along_axis(item, current_axis + 1, target_axis) for item in data]
+        
+        result_data = _max_along_axis(self.data, 0, axis)
+        return Tensor(result_data, requires_grad=self.requires_grad)
 
 class Parameter(Tensor):
     """New Param only requres_grad=True by default for now"""

@@ -1,0 +1,430 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+
+\usepackage{xcolor}
+\usepackage{hyperref}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\pagestyle{plain}
+\thispagestyle{plain}
+\begin{document}
+
+\title{Deep Learning Final Report}
+
+\author{\IEEEauthorblockN{NGUYEN Thien An}
+\IEEEauthorblockA{\textit{M1 Student} \\
+\textit{University of Science and Technology of Hanoi (USTH)}\\
+Hanoi, Vietnam \\
+annt2440048@usth.edu.vn}
+}
+
+\maketitle
+
+\begin{abstract}
+Convolutional Neural Networks (CNNs) are one of the many Deep Learning models that leverage the spatial structure of data, typically in processing images but also used in various fields such as speech recognition, to perform tasks like classification, detection, and segmentation with high accuracy. This report provides the details implementation of a CNN from scratch without relying on high-level deep learning frameworks. Key components include convolutional layers, pooling mechanisms, and activation functions. Additionally, an automatic differentiation (autograd) mechanism is implemented to support gradient-based optimization and enable efficient backpropagation. This project serves as both a technical exploration and an educational resource for understanding the foundations of CNNs.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Convolutional Neural Networks, MNIST, Deep Learning, Backpropagation, Autograd, Tensor
+\end{IEEEkeywords}
+
+\section{Introduction}
+Convolutional Neural Networks (CNNs) are one of the many Deep Learning models that leverage the spatial structure of data, typically in processing images but also used in various fields such as speech recognition, to perform tasks like classification, detection, and segmentation with high accuracy. Their ability to automatically learn spatial hierarchies of features from raw image data has made them the backbone of many modern AI systems.\\
+
+\noindent This report focuses on the implementation of a CNN from scratch, specifically for handwritten digit recognition using the MNIST dataset-a widely used benchmark in the machine learning community-consisting of 60000 training images and 10000 test images of grayscale digits ranging from 0 to 9. In this version, a reduced version with 12000 samples is used.\\
+
+\noindent Since the primary objective of this work is to develop a comprehensive understanding of the internal mechanisms of CNNs. To achieve this, key components such as convolutional layers, pooling layers, and fully connected layers must be implemented manually. This approach not only reinforces the mathematical foundations of CNNs but also offers insight into the computational processes involved in their training and optimization. \\
+
+\noindent The code for this work can be found here: \url{https://github.com/TGraceAn/dl2025}. To use, upload your own MNIST datasets in the CNN folder, edit your configurations, and then run:
+\begin{verbatim}
+python main.py
+\end{verbatim}
+Also, make sure that you're in the CNN folder if you want to use the configs directly.
+
+\section{Related Work}
+The MNIST dataset has been extensively studied and serves as a standard benchmark for evaluating machine learning and deep learning models on digit recognition tasks. Early approaches to this problem utilized traditional machine learning techniques such as Support Vector Machines (SVMs), k-Nearest Neighbors (k-NN), and handcrafted feature extraction methods, including Histogram of Oriented Gradients (HOG) and edge detection.\\
+
+\noindent With the rise of deep learning, Convolutional Neural Networks (CNNs) have become the dominant architecture for image-related tasks due to their ability to automatically learn local representations from raw pixel data. CNNs solve the problem of fully connected (FC) layers by introducing convolutional and pooling operations that reduce the number of parameters and exploit spatial hierarchies in images, enabling more efficient and effective learning. Of course, we all know Yann LeCun, person who is considered the "Godfather" of CNN.
+
+\section{Motivation}
+Traditional machine learning models, such as Support Vector Machines and k-Nearest Neighbors, rely heavily on manual feature extraction techniques, which often require domain expertise and may not generalize well across different image datasets. These methods typically treat images as flat vectors, ignoring the inherent spatial structure of the data.\\
+
+\noindent Convolutional Neural Networks (CNNs) offer a powerful alternative by automatically learning spatial hierarchies of features directly from pixel data. Unlike fully connected neural networks, CNNs preserve the two-dimensional structure of images and use local connections, weight sharing, and pooling operations to reduce the number of parameters while maintaining important spatial information. This makes CNNs highly efficient and scalable for image-related tasks.
+
+\section{Methodology}
+\subsection{Simple CNN Architecture}
+In this implementation, a simple CNN model is implemented, consisting of three convolutional layers, one max pooling layer, followed by flattening and a fully connected (dense) layer:
+
+\textbf{Network Structure:}
+\begin{itemize}
+    \item \textbf{Input Layer:} 28×28 grayscale image (1 channel)
+    \item \textbf{Convolutional Layer 1:} 3 filters, kernel size 3×3, padding=1, output size: 28×28×3
+    \item \textbf{Convolutional Layer 2:} 6 filters, kernel size 3×3, padding=1, output size: 28×28×6
+    \item \textbf{Convolutional Layer 3:} 9 filters, kernel size 3×3, padding=1, output size: 28×28×9
+    \item \textbf{Max Pooling Layer:} 2×2 pool size with stride 2, output size: 14×14×9
+    \item \textbf{Flatten Layer:} Flattens the output to a vector of size \(9 \times 14 \times 14 = 1764\)
+    \item \textbf{Fully Connected Layer:} Linear layer mapping from 1764 inputs to 10 outputs (digit classes)
+\end{itemize}
+
+\subsection{Convolutional Layers}
+The convolutional layers implement 2D convolution operations to extract spatial features from input images. Each convolutional layer applies multiple learnable filters to detect different patterns such as edges, corners, and textures.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=1\columnwidth]{image/Convol.png}}
+\caption{Convolution operation}
+\label{fig:convolution}
+\end{figure}
+
+In many standard CNN implementations, convolutional kernels slide over input images or feature maps with a stride of one, leveraging the spatial structure where neighboring pixels are highly correlated. The convolution kernel approach in CNN differs somewhat from traditional convolution in probability theory or signal processing, particularly in how the kernel aligns with image boundaries and resolution, and is not flipped. This is similar to cross-correlation in image processing. During convolution, learnable kernels move across the input, performing element-wise multiplications followed by summations at each position to extract meaningful local features.\\
+
+\noindent Padding is also used to add extra pixels around the input image or feature map boundaries, which helps preserve spatial dimensions after convolution and prevents the loss of information at the edges. By applying padding, the network can better capture features near the borders, ensuring consistent output sizes and enabling deeper architectures without excessive downsampling.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=1\columnwidth]{image/Padding.png}}
+\caption{Padding used in Convolution}
+\label{fig:padding}
+\end{figure}
+
+\subsection{Pooling Layers}
+Pooling layer is usually placed between different convolution layers to reduce the size of the output data and still preserve the important features of images. In practice, a pooling layer with size = (2,2), stride = 2, and padding = 0 is often used so that the output width and height of the data are reduced half while depth is unchanged.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=1\columnwidth]{image/Pooling.png}}
+\caption{Pooling operation with 2×2 window and stride 2}
+\label{fig:pooling}
+\end{figure}
+
+\subsection{Flatten and Dense Layers (Linear)}
+The flatten layer converts the multi-dimensional output of the convolutional and pooling layers into a one-dimensional vector, making it suitable for input into dense (fully connected) layers. Dense layers perform linear transformations on their inputs, followed by nonlinear activation functions to introduce complexity and enable the network to learn intricate patterns.
+
+Mathematically, each neuron in a dense layer computes an output \( y \) as:
+
+\[
+y = f(\mathbf{w}^\top \mathbf{x} + b)
+\]
+
+where \(\mathbf{x}\) is the input vector, \(\mathbf{w}\) is the weight vector, \(b\) is the bias term, and \(f\) is the activation function (e.g., ReLU or softmax).
+
+\subsection{Activation Functions}
+The network uses two main activation functions to introduce non-linearity:
+
+\textbf{ReLU (Rectified Linear Unit):} This function is applied after each convolutional layer and dense layer. It outputs the input directly if it is positive; otherwise, it outputs zero:
+
+\[
+\text{ReLU}(x) = \max(0, x)
+\]
+
+ReLU helps the network learn complex patterns by adding non-linearity and mitigates the vanishing gradient issue, which in turn allows for faster and more effective training.
+
+\textbf{Softmax:} Applied in the final output layer, softmax converts raw scores into probabilities across the multiple classes:
+
+\[
+\text{Softmax}(x_i) = \frac{e^{x_i}}{\sum_{j=1}^{K} e^{x_j}}
+\]
+
+where \(K=10\) corresponds to the number of digit classes. By normalizing outputs to sum to one, softmax creates a sort of probability distribution for each class.
+
+\subsection{Loss Function}
+
+In this implementation, the cross-entropy loss function is implemented. This shows the difference between the predicted probability distribution produced by the network and the true probability.
+
+\textbf{Cross-Entropy Loss:} For a single sample with predicted probabilities \(\hat{y}\) and true labels \(y\), the loss is computed as:
+
+\begin{equation}
+L = -\sum_{i=1}^{K} y_i \log(\hat{y}_i)
+\end{equation}
+
+where \(K\) is the number of classes, \(y_i\) is the true label indicator (1 for the correct class, 0 otherwise), and \(\hat{y}_i\) is the predicted probability for class \(i\).\\
+
+\noindent For a batch of \(N\) samples, the average cross-entropy loss is calculated as:
+
+\begin{equation}
+L_{\text{batch}} = \frac{1}{N} \sum_{n=1}^{N} L_n = -\frac{1}{N} \sum_{n=1}^{N} \sum_{i=1}^{K} y_{n,i} \log(\hat{y}_{n,i})
+\end{equation}
+
+where \(y_{n,i}\) and \(\hat{y}_{n,i}\) denote the true label and predicted probability for class \(i\) of sample \(n\), respectively.\\
+
+ \noindent Minimizing Cross-entropy loss during training encourages the model to produce probability distributions that closely match the true labels, improving classification accuracy.
+
+\noindent Additionally, this loss function is differentiable, which makes it suitable for optimization via gradient-based methods such as stochastic gradient descent (SGD) or its variants.
+
+\subsection{Optimization Algorithm}
+
+A Stochastic Gradient Descent (SGD) is used as the optimization algorithm to update model parameters during training.
+
+\textbf{SGD Parameter Update:} For each trainable parameter \(\theta\), the update rule is defined as:
+
+\begin{equation}
+\theta_{t+1} = \theta_t - \eta \frac{\partial L}{\partial \theta_t}
+\label{equation3}
+\end{equation}
+
+where \(\eta\) is the learning rate and \(\frac{\partial L}{\partial \theta_t}\) denotes the gradient of the loss function with respect to the parameter \(\theta\) at time step \(t\).
+
+\textbf{Learning Rate:} A configurable learning rate controls the size of each parameter update step. Adjusting the learning rate balances the speed of convergence with training stability.\\
+
+\textbf{Batch Processing:} The implementation processes data in mini-batches, computing gradients over multiple samples before updating parameters. This approach offers several advantages:
+\begin{itemize}
+    \item More stable gradient estimates compared to single-sample updates
+    \item Improved computational efficiency through vectorized operations
+    \item Enhanced convergence properties in non-convex optimization landscapes
+\end{itemize}
+
+\noindent Gradient computation accumulated via AutoGrad in this implementation provides accurate and simple gradient handling. This also helps with coding since after implementing AutoGrad, we don't have to write a backward() pass for each and every module we add.
+
+\section{Implementation}
+\subsection{AutoGrad}
+The automatic differentiation system forms the backbone of this CNN implementation, enabling efficient gradient computation through the computational graph. The AutoGrad implementation follows a reverse-mode differentiation approach, similar to PyTorch's design philosophy. The AutoGrad is based on the AutoGrad implemented by Andrej Kapathy in his series of LLM from scratch \url{https://www.youtube.com/@AndrejKarpathy/videos}
+
+\subsubsection{Core Tensor Class}
+The Tensor class serves as the fundamental building block, encapsulating both data and gradient information:
+Each tensor maintains:
+\begin{itemize}
+\item \textbf{Data structure}: Nested lists representing multi-dimensional arrays
+\item \textbf{Gradient tracking}: requires\_grad flag and accumulated gradients
+\item \textbf{Computational graph}: References to parent nodes (\_prev) and backward function (\_backward)
+\end{itemize}
+\subsubsection{Computational Graph Construction}
+Operations between tensors automatically construct a computational graph by setting up backward functions and parent relationships.
+
+\subsubsection{Backward Propagation Algorithm}
+The backward() method implements reverse-mode automatic differentiation through topological sorting:
+\begin{itemize}
+\item \textbf{Topological Ordering}: Build dependency graph to ensure gradients flow in correct order
+\item \textbf{Gradient Initialization}: Set output gradient to ones
+\item \textbf{Reverse Traversal}: Execute backward functions from output to inputs
+\end{itemize}
+
+\subsubsection{Gradient Accumulation}
+The system supports gradient accumulation through the \_add\_gradients helper function, essential for:
+\begin{itemize}
+\item Parameter updates across multiple samples
+\item Handling tensors used multiple times in computation
+\item Broadcasting scenarios with dimension reduction
+\end{itemize}
+
+\subsubsection{Broadcasting and Shape Handling}
+This implementation handles complex broadcasting scenarios, particularly in matrix operations. The \_\_matmul\_\_ method includes sophisticated broadcasting logic:
+\begin{itemize}
+\item \textbf{Shape Padding}: Align tensor dimensions for batch operations
+\item \textbf{Gradient Reduction}: Properly reduce gradients for broadcasted dimensions
+\item \textbf{Dimension Compatibility}: Validate matrix multiplication constraints
+\end{itemize}
+
+\subsubsection{Parameter Management}
+The Parameter class extends Tensor with requires\_grad=True by default, designed specifically for learnable parameters:
+
+\subsubsection{Activation Functions with AutoGrad}
+Activation functions are implemented as standalone functions that maintain gradient tracking:
+
+\subsubsection{Memory and Efficiency Considerations}
+While this implementation prioritizes clarity over optimization, several design choices support reasonable efficiency:
+\begin{itemize}
+\item \textbf{Manual Evaluation:} Gradients computed only when backward() is called
+\item \textbf{Graph Pruning}: Only tensors with requires\_grad=True participate in gradient computation
+\item \textbf{In-place Operations}: Limited support for memory-efficient operations
+\end{itemize}
+\subsubsection{Integration with CNN Components}
+The AutoGrad system seamlessly integrates with CNN layers through the Module base class, which automatically tracks parameters and enables recursive gradient computation across the entire network architecture. This design allows complex neural networks to be trained with minimal boilerplate code while maintaining full control over the gradient flow.
+
+\subsection{Optimizer}
+The optimizer module provides the parameter update mechanism for training this CNN. Following the strategy pattern, we implement a flexible architecture that supports different optimization algorithms while maintaining a consistent interface.
+
+\subsubsection{Optimizer Base Class}
+The Optimizer abstract base class defines the common interface for all optimization algorithms. The design provides several key functionalities:
+
+\begin{itemize}
+\item \textbf{Parameter Discovery}: Automatically collects all trainable parameters from the model hierarchy
+\item \textbf{Unified Interface}: Consistent step() and zero\_grad() methods across all optimizers
+\item \textbf{Extensibility}: Abstract update\_param() method allows easy implementation of new algorithms
+\end{itemize}
+
+\subsubsection{Parameter Collection Mechanism}
+The optimizer automatically discovers parameters through the model's parameters() method, which recursively traverses the module hierarchy. This approach ensures that complex nested architectures (such as this CNN with multiple convolutional and linear layers) have all their parameters automatically included in the optimization process.
+
+\subsubsection{Stochastic Gradient Descent Implementation}
+The SGD implementation follows the standard gradient descent update rule as mention in Equation~\ref{equation3}
+
+\subsubsection{Recursive Parameter Updates}
+The compute\_update function handles the nested list structure of the tensor implementation through recursive traversal. This design choice allows the optimizer to work seamlessly with tensors of arbitrary dimensionality
+
+\subsubsection{Training Loop Integration}
+The optimizer integrates into the training loop through a standard three-step process:
+\begin{itemize}
+\item \textbf{Zero Gradients}: Clear accumulated gradients from previous iteration
+\item \textbf{Backward Pass}: Compute gradients via backpropagation
+\item \textbf{Parameter Update}: Apply computed gradients to update parameters
+\end{itemize}
+
+\subsubsection{Gradient Management}
+The optimizer provides two essential gradient management methods:
+\begin{itemize}
+\item \textbf{zero\_grad()}: Resets all parameter gradients to zero, preventing accumulation between training steps
+\item \textbf{step()}: Iterates through all parameters and applies updates only to those with requires\_grad=True
+\end{itemize}
+This design supports gradient accumulation scenarios where multiple forward passes contribute to a single parameter update, commonly used in mini-batch training or when dealing with memory constraints.
+
+\subsubsection{Extensibility and Future Optimizers}
+The modular design facilitates easy implementation of advanced optimizers such as Adam, RMSprop, or AdaGrad. Each new optimizer would only need to implement the update\_param method while inheriting the parameter discovery and gradient management functionality.\\
+
+\noindent Several design choices support reasonable training efficiency. \begin{itemize}
+\item \textbf{In-place Updates}: Parameter data is modified directly, avoiding unnecessary memory allocation
+\item \textbf{Conditional Updates}: Only parameters with non-None gradients are processed
+\item \textbf{Manual Evaluation}: Gradient computations occur only when explicitly requested
+\end{itemize}
+The optimizer's integration with the AutoGrad system ensures that gradient computation and parameter updates work seamlessly together, providing a robust foundation for training the CNN architecture.
+
+\section{Dataset}
+\subsection{Dataset Preparation}
+The MNIST dataset preprocessing is handled through a custom DataLoader implementation that provides comprehensive data management capabilities. The dataset preparation process involves several key steps:
+
+The dataloader expects a directory structure following the pattern:
+\begin{verbatim}
+data_dir/
+├── train/
+│   ├── 0/  # Images for digit 0
+│   ├── 1/  # Images for digit 1
+│   └── ...
+└── test/
+├── 0/
+├── 1/
+└── ...
+\end{verbatim}
+Each loaded image undergoes a standardized preprocessing pipeline:
+
+The normalization step is crucial for CNN training stability, as it:
+\begin{itemize}
+\item Prevents gradient explosion/vanishing
+\item Ensures consistent input ranges across different images
+\item Improves convergence speed and training stability
+\end{itemize}
+
+\subsection{Data Splitting Strategy}
+\subsubsection{Train-Validation Split}
+The dataloader implements a randomized train-validation split to ensure unbiased model evaluation.
+
+\begin{enumerate}
+\item \textbf{Grayscale Conversion}: Ensures consistent single-channel input
+\item \textbf{Dimension Validation}: Confirms 28×28 pixel dimensions for MNIST compatibility
+\item \textbf{Normalization}: Scales pixel values from [0, 255] to [0, 1] range
+\item \textbf{Tensor Conversion}: Reshapes flat pixel data into 2D arrays
+\end{enumerate}
+
+\textbf{Data Loading:} Raw MNIST data is loaded using PIL. Each image is converted from the original 28×28 pixel format with integer values ranging from 0-255.
+
+\section{Training and Evaluation}
+\subsection{Training Process}
+In order to update model weights, the training process iterates through the training dataset in batches using a forward pass and backpropagation. In this implementation it misses early stopping, but the weights are saved.
+
+\textbf{Forward Pass:} As mention, each batch will go through a custom CNN model. The output stores the logits for each class.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=1\columnwidth]{image/CNN.png}}
+\caption{Simple CNN}
+\label{fig:CNN}
+\end{figure}
+
+The logits will be used by the CrossEntropy loss function to calculate the total loss. Also, the loss is the average loss over each batch.
+
+\textbf{Backpropagation:} When call loss.backward(), every node (Tensor) inside the topological gradient tree will be updated using the SGD algorithm.
+
+\textbf{Training Configuration:} Simple edits through the confix.txt file will set up the training pipeline.
+\begin{verbatim}
+data_dir = data/reduced_mnist_png
+batch_size = 32
+epochs = 10
+learning_rate = 0.01
+optimizer_type = SGD
+loss_function = cross_entropy
+seed = 11
+image_type = jpg
+train_val_split = 0.8
+log_file = training_log.txt
+save_dir = saved
+\end{verbatim}
+
+\textbf{Performance Monitoring:} During training, the following metrics are tracked and logged:
+\begin{itemize}
+\item Training loss per iteration (batch) and training/validation loss per epoch
+\item Validation accuracy
+\end{itemize}
+
+Finally, when done, the weights of the model will be saved in a file as well.
+
+\subsection{Model Evaluation}
+The trained model is evaluated on distinct datasets to assess performance and generalization capability\\
+
+\noindent \textit{In the implementation, actually only a few samples of the Validation split (320 samples) is used to evaluate the performance, since each iteration took too long to run. (About 10s per iteration with a batch of 32), similarly for the Test split.}
+
+\subsection{Evaluation Criteria}
+Accuracy is used as the default criterion.
+
+For each prediction, the class with the highest probability from the SoftMax output is compared against the true class. The implementation provides detailed evaluation statistics, including:
+\begin{itemize}
+\item Validation accuracies.
+\item Training convergence statistics (epochs trained, loss improvement)
+\item Model architecture summary and hyperparameter configuration
+\end{itemize}
+
+\section{Results and Analysis}
+\subsection{Experimental Setup}
+The CNN model was trained and evaluated on a subset of the MNIST dataset using the following hardware and software configuration:
+\begin{itemize}
+    \item CPU: Intel Core i5-1038NG7
+    \item RAM: 16 GB
+\end{itemize}
+
+\textbf{Dataset Split:}
+\begin{itemize}
+\item Total samples: 11,000
+\item Training set: 9,000 samples
+\item Validation set: 1,000 samples
+\item Test set: 2,000 samples (only 320 samples were used)
+\item Batch size: 32
+\end{itemize}
+
+\textbf{Training Configuration:}
+\begin{itemize}
+\item Maximum epochs: 10
+\item Learning rate: 0.01
+\item Optimizer: Stochastic Gradient Descent (SGD)
+\end{itemize}
+
+\subsection{Training Results}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\linewidth]{image/Acc.png}
+    \caption{Training and validation accuracy over epochs}
+    \label{fig:acc}
+\end{figure}
+
+Figure~\ref{fig:acc} illustrates the progression of training and validation accuracy across epochs. Figure~\ref{fig:loss} displays the corresponding loss curves. Although there is a slight increase in the validation loss during training, both curves follow a similar trend, suggesting that the model is generalizing reasonably well. This behavior indicates that the model architecture is relatively lightweight, which may limit its ability to fully capture complex patterns in the data. Nevertheless, the model achieved a peak validation accuracy of 84.06\%, demonstrating effective learning with minimal overfitting.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\linewidth]{image/Loss.png}
+    \caption{Training and validation loss over epochs}
+    \label{fig:loss}
+\end{figure}
+
+Look at this, we can see test performance was observed after the fourth epoch, with the following metrics for (epoch 1-5)
+\begin{itemize}
+\item Validation accuracy: 84.06\%
+\item Training loss: 1.17
+\item Validation loss: 1.13
+\end{itemize}
+
+\section{Conclusion and Future Work}
+This study presents a from-scratch implementation of a Convolutional Neural Network (CNN) tailored for handwritten digit classification using the MNIST dataset. The network incorporates core components such as convolutional, pooling, and dense layers, along with non-linear activation functions, modeled after the LeNet-5 architecture. Despite training on a limited dataset of 11,000 samples due to computational constraints, the model achieved a strong validation accuracy of 84.06\%, demonstrating its effectiveness.
+
+Future work will focus on scaling the implementation to utilize the full MNIST dataset, optimizing computational performance, and experimenting with more advanced CNN architectures. Additionally, exploring different hyperparameter settings and incorporating regularization techniques may further improve model generalization and robustness.
+
+\end{document}

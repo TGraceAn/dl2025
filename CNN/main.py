@@ -112,7 +112,7 @@ def evaluate_model(model, dataloader, batch_size, criteria, num_batches=10):
     accuracy = (correct / total) * 100
     return avg_loss, accuracy
 
-class MNISTPNGLoader:
+class MNISTLoader:
     """MNIST dataloader that reads from organized directories"""
     
     def __init__(self, data_dir: str, seed: int = 11, image_type: str = "png", split: float = 0.9):
@@ -324,7 +324,7 @@ def training_pipeline(config):
         f.write(f"Configuration: {config}\n")
         f.write("=" * 50 + "\n\n")
 
-    dataloader = MNISTPNGLoader(data_dir, seed=seed, image_type=image_type, split=train_val_split)
+    dataloader = MNISTLoader(data_dir, seed=seed, image_type=image_type, split=train_val_split)
     dataloader.load_mnist_data()
 
     model = CNN_Lite()

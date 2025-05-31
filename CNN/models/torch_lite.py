@@ -68,7 +68,7 @@ class Tensor:
         else:
             value = self.data[index]
         
-        return Tensor(value)
+        return Tensor(value, requires_grad=self.requires_grad)
 
     # representation of the Tensor
     def __repr__(self) -> str:
@@ -399,8 +399,11 @@ class Tensor:
 
         out = Tensor(result_data, requires_grad=self.requires_grad or other.requires_grad)
         out._prev = {self, other}
-
+        
         def _backward():
+            if out.grad is None:
+                return
+
             def _transpose_last_two_dims(data):
                 """Transpose last two dimensions"""
                 if isinstance(data[0], list) and isinstance(data[0][0], list):
@@ -459,21 +462,25 @@ class Tensor:
                 
                 return result
 
-            other_t = _transpose_last_two_dims(other.data)
-            grad_self_full = _broadcast_matmul_raw(out.grad, other_t)
-            grad_self = _reduce_broadcasted_dims(grad_self_full, self.shape, out.shape, other.shape)
-            self.grad = _add_gradients(self.grad, grad_self)
+            if self.requires_grad:
+                other_t = _transpose_last_two_dims(other.data)
+                grad_self_full = _broadcast_matmul_raw(out.grad, other_t)
                 
-            self_t = _transpose_last_two_dims(self.data)
-            grad_other_full = _broadcast_matmul_raw(self_t, out.grad)
-            grad_other = _reduce_broadcasted_dims(grad_other_full, other.shape, self.shape, out.shape)
-            other.grad = _add_gradients(other.grad, grad_other)
+                grad_self = _reduce_broadcasted_dims(grad_self_full, self.shape, out.shape, other.shape)
+                self.grad = _add_gradients(self.grad, grad_self)
+                    
+            if other.requires_grad:
+                self_t = _transpose_last_two_dims(self.data)
+                grad_other_full = _broadcast_matmul_raw(self_t, out.grad)
+                
+                grad_other = _reduce_broadcasted_dims(grad_other_full, other.shape, self.shape, out.shape)
+                other.grad = _add_gradients(other.grad, grad_other)
         
         out._backward = _backward
         return out
 
     def detach(self) -> Tensor:
-        return Tensor(self.data)
+        return Tensor(self.data, requires_grad=self.requires_grad)
 
     def clone(self) -> Tensor:
         return Tensor(self.data, requires_grad=self.requires_grad)
@@ -640,7 +647,19 @@ class Tensor:
         
         rows, cols = self.shape
         transposed_data = [[self.data[j][i] for j in range(rows)] for i in range(cols)]
-        return Tensor(transposed_data)
+        
+        out = Tensor(transposed_data, requires_grad=self.requires_grad)
+        out._prev = {self} 
+        
+        def _backward():
+            if out.grad is None:
+                return
+            grad_rows, grad_cols = len(out.grad), len(out.grad[0])
+            transposed_grad = [[out.grad[j][i] for j in range(grad_rows)] for i in range(grad_cols)]
+            self.grad = _add_gradients(self.grad, transposed_grad)
+        
+        out._backward = _backward
+        return out
 
     def transpose_last_two_dims(self) -> Tensor:
         """Transpose the last two dimensions of a tensor (for batch matmul)"""
@@ -678,7 +697,7 @@ class Tensor:
         if axis is None:
             # max value in all
             flat_data = self._flatten_recursive(self.data)
-            return Tensor(max(flat_data))
+            return Tensor(max(flat_data), requires_grad=self.requires_grad)
         
         if isinstance(axis, tuple):
             result = self.max(axis=axis[-1])

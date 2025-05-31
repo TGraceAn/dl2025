@@ -310,13 +310,93 @@ class Tensor:
         return out
 
     def __matmul__(self, other: Tensor) -> Tensor:
-        """ Matrix multiplication with gradient tracking. """
+        """Update matrix with broadcasting support"""
         if not isinstance(other, Tensor):
             other = Tensor(other)
+
+        # Ensure at least 2D tensors
+        if len(self.shape) < 2 or len(other.shape) < 2:
+            raise ValueError("Both tensors must be at least 2-dimensional.")
+
+        a_shape = list(self.shape)
+        b_shape = list(other.shape)
+
+        if a_shape[-1] != b_shape[-2]:
+            raise ValueError(f"Incompatible matrix dimensions: {a_shape[-1]} and {b_shape[-2]}")
+
+        # Pad shapes to same length for broadcasting
+        max_dims = max(len(a_shape), len(b_shape))
+        a_padded = [1] * (max_dims - len(a_shape)) + a_shape
+        b_padded = [1] * (max_dims - len(b_shape)) + b_shape
         
-        # Forward pass using parent class matmul
-        result_data = super(Tensor, self).__matmul__(other).data
+        # Calculate broadcast batch dimensions
+        batch_shape = []
+        for i in range(max_dims - 2):
+            a_dim, b_dim = a_padded[i], b_padded[i]
+            if a_dim == 1:
+                batch_shape.append(b_dim)
+            elif b_dim == 1:
+                batch_shape.append(a_dim)
+            elif a_dim == b_dim:
+                batch_shape.append(a_dim)
+            else:
+                raise ValueError(f"Cannot broadcast dimensions {a_dim} and {b_dim}")
         
+        def get_matrix_at_batch(data, batch_idx, original_shape, padded_shape):
+            """Extract 2D matrix at given batch indices with broadcasting"""
+            # Convert batch indices to original tensor indices
+            original_idx = []
+            offset = len(padded_shape) - len(original_shape)
+            
+            for i, idx in enumerate(batch_idx):
+                if i < offset:
+                    continue  # Skip padded dimensions
+                orig_dim = i - offset
+                if orig_dim < len(original_shape) and original_shape[orig_dim] == 1:
+                    original_idx.append(0)  # Broadcast dimension
+                else:
+                    original_idx.append(idx)
+            
+            # Navigate to the matrix
+            current = data
+            for idx in original_idx:
+                current = current[idx]
+            return current
+        
+        def matmul_2d(a_2d, b_2d):
+            """Core 2D matrix multiplication"""
+            rows_a, cols_a = len(a_2d), len(a_2d[0])
+            rows_b, cols_b = len(b_2d), len(b_2d[0])
+            
+            result = []
+            for i in range(rows_a):
+                row = []
+                for j in range(cols_b):
+                    val = sum(a_2d[i][k] * b_2d[k][j] for k in range(cols_a))
+                    row.append(val)
+                result.append(row)
+            return result
+        
+        def build_result(batch_indices):
+            """Recursively build result tensor"""
+            if len(batch_indices) == len(batch_shape):
+                # At leaf level - perform 2D matmul
+                a_2d = get_matrix_at_batch(self.data, batch_indices, a_shape, a_padded)
+                b_2d = get_matrix_at_batch(other.data, batch_indices, b_shape, b_padded)
+                return matmul_2d(a_2d, b_2d)
+            else:
+                # Recurse over current batch dimension
+                current_dim = batch_shape[len(batch_indices)]
+                return [build_result(batch_indices + [i]) for i in range(current_dim)]
+        
+        # Handle different cases
+        if not batch_shape:
+            # Simple 2D case
+            result_data = matmul_2d(self.data, other.data)
+        else:
+            # Batch case
+            result_data = build_result([])
+
         out = Tensor(result_data, requires_grad=self.requires_grad or other.requires_grad)
         out._prev = {self, other}
 
@@ -400,8 +480,7 @@ class Tensor:
 
     def zero_grad(self):
         """Zero the gradients"""
-        if self.requires_grad:
-            self.grad = _zeros_like(self.data)
+        self.grad = _zeros_like(self.data)
     
     @classmethod
     def zeros(cls, shape: Tuple[int, ...], requires_grad: bool = False) -> Tensor:
@@ -463,10 +542,30 @@ class Tensor:
         Flatten tensor to 1D.
         
         Returns:
-            New 1D tensor with flattened data
+            Flattened data and gradient tracking
         """
         flat_data = self._flatten_recursive(self.data)
-        return Tensor(flat_data)
+        
+        out = Tensor(flat_data, requires_grad=self.requires_grad)
+        out._prev = {self}
+        
+        def _backward():
+            reshaped_grad = self._reshape_flat_to_nested(out.grad, self.shape)
+            self.grad = _add_gradients(self.grad, reshaped_grad)
+        
+        out._backward = _backward
+        return out
+
+    def flatten_(self) -> Tensor:
+        """
+        Flatten tensor to 1D in-place (no gradient tracking).
+        
+        Returns:
+            Same tensor object with flattened data
+        """
+        flat_data = self._flatten_recursive(self.data)
+        self.data = flat_data
+        return self
     
     def reshape(self, new_shape: Tuple[int, ...]) -> Tensor:
         """
@@ -492,7 +591,16 @@ class Tensor:
         flat_data = self._flatten_recursive(self.data)
         new_data = self._reshape_flat_to_nested(flat_data, new_shape)
         
-        return Tensor(new_data)
+        out = Tensor(new_data, requires_grad=self.requires_grad)
+        out._prev = {self}
+        
+        def _backward():
+            flat_grad = self._flatten_recursive(out.grad)
+            reshaped_grad = self._reshape_flat_to_nested(flat_grad, self.shape)
+            self.grad = _add_gradients(self.grad, reshaped_grad)
+        
+        out._backward = _backward
+        return out
 
     def _flatten_recursive(self, data):
         if isinstance(data, list):
@@ -609,6 +717,9 @@ class Parameter(Tensor):
     """New Param only requres_grad=True by default for now"""
     def __init__(self, data: Union[Num, List[Num]], requires_grad: bool = True):
         super().__init__(data, requires_grad=requires_grad)
+
+    def __repr__(self) -> str:
+        return f"Parameter({self.data})"
 
 
 # Helper functions

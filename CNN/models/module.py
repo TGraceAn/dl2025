@@ -2,7 +2,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Tuple, Union, Callable, Optional, Set, Iterator
 import math
-from torch_lite import Tensor, Parameter
+from torch_lite import Tensor, Parameter, _add_gradients
 from functional import sigmoid, relu
 from random_lite import SimpleRandom
 from dataclasses import dataclass
@@ -12,26 +12,40 @@ rng = SimpleRandom(seed=11)
 """Initial stuff for CNN"""
 class Module(ABC):
     """Interface for all modules"""
-
-    @abstractmethod
     def __init__(self):
         """Initialize the module"""
+        self.weights: Optional[Parameter] = None
+        self.biases: Optional[Parameter] = None
 
     @abstractmethod
     def forward(self, x):
         """Forward pass"""
+
+    def parameters(self) -> List[Parameter]:
+        """Return all parameters of the module and its submodules"""
+        params = []
         
-    @abstractmethod
-    def backward(self, grad_output):
-        """Backward pass"""
+        for attr_name in dir(self):
+            if not attr_name.startswith('_'):  # Skip private attributes
+                attr = getattr(self, attr_name)
+                
+                if isinstance(attr, Parameter):
+                    params.append(attr)
+                elif isinstance(attr, Module) and attr is not self:
 
-    @abstractmethod
-    def step(self, lr):
-        """Update the weights"""
+                    params.extend(attr.parameters())
 
-    @abstractmethod
-    def zero_grad(self):
-        """Zero the gradients"""
+                # # For things that's similar to nn.ModuleList 
+                # elif isinstance(attr, (list, tuple)):
+                #     for item in attr:
+                #         if isinstance(item, Parameter):
+                #             params.append(item)
+                #         elif isinstance(item, Module):
+                #             params.extend(item.parameters())
+
+        
+        return params
+
 
     def __call__(self, x):
         """Call the forward method"""
@@ -58,44 +72,44 @@ class Module(ABC):
         """Update the weights using the optimizer"""
         pass
 
-@dataclass
-class ModelConfig:
-    """
-    Args:
-        in_channels (int): Number of input channels
-        out_channels (int): Number of output channels
-        kernel_size (int): Size of the convolutional kernel
-        stride (int): Stride of the convolution
-        padding (int): Padding added to both sides of the input
-    """
-    in_channels: int
-    out_channels: int
-    kernel_size: int
-    stride: int = 1
-    padding: int = 1
+# @dataclass
+# class ModelConfig:
+#     """
+#     Args:
+#         in_channels (int): Number of input channels
+#         out_channels (int): Number of output channels
+#         kernel_size (int): Size of the convolutional kernel
+#         stride (int): Stride of the convolution
+#         padding (int): Padding added to both sides of the input
+#     """
+#     in_channels: int
+#     out_channels: int
+#     kernel_size: int
+#     stride: int = 1
+#     padding: int = 1
     
 
 class Convol2D(Module):
     """2D Convolutional layer"""
-    def __init__(self, config: ModelConfig):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0):
         super().__init__()
-        self.config = config
-        self.in_channels = config.in_channels
-        self.out_channels = config.out_channels
-        self.kernel_size = config.kernel_size
-        self.stride = config.stride
-        self.padding = config.padding
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
 
         # Calculate total elements needed
-        total_elements = config.out_channels * config.in_channels * config.kernel_size * config.kernel_size
+        total_elements = out_channels * in_channels * kernel_size * kernel_size
 
-        std = math.sqrt(2.0 / (config.in_channels * config.kernel_size * config.kernel_size)) # recommended initialization for Conv2D layers I read somewhere
+        std = math.sqrt(2.0 / (in_channels * kernel_size * kernel_size)) # recommended initialization for Conv2D layers I read somewhere
         flat_weights = [rng.normal(0, std) for _ in range(total_elements)]
         weights_tensor = Tensor(flat_weights)
-        weights_reshaped = weights_tensor.reshape((config.out_channels, config.in_channels, config.kernel_size, config.kernel_size))
         
+        weights_reshaped = weights_tensor.reshape((out_channels, in_channels, kernel_size, kernel_size))
+
         self.weights = Parameter(weights_reshaped.data)
-        self.biases = Parameter([rng.uniform(-0.5, 0.5) for _ in range(config.out_channels)]) 
+        self.biases = Parameter([rng.uniform(-0.5, 0.5) for _ in range(out_channels)]) 
 
     def forward(self, x: Tensor) -> Tensor:
         """
@@ -122,7 +136,8 @@ class Convol2D(Module):
         height_out = (height - self.kernel_size) // self.stride + 1
         width_out = (width - self.kernel_size) // self.stride + 1
 
-        patches = self._im2col(x)  # Extract patches that will be used for convolution
+        patches = self._im2col(x)  # Extract patches that will be used for convolution 
+        # (batch_size, patch_size, num_patches)
         
         # (out_channels, in_channels, kernel_size, kernel_size) -> (out_channels, patch_size)
         patch_size = self.in_channels * self.kernel_size * self.kernel_size
@@ -131,9 +146,12 @@ class Convol2D(Module):
         # TODO: Check error if size doesn't match here
         # (out_channels, patch_size) @ (batch_size, patch_size, num_patches) -> (batch_size, out_channels, num_patches)
         conv_result = weights_2d @ patches
+        
+        # Create bias tensor with proper broadcasting shape
+        for c in range(self.out_channels):
+            conv_result[:, c, :] += self.biases[c]
 
-        bias_expanded = self.biases.reshape((1, self.out_channels, 1))
-        output = conv_result + bias_expanded
+        output = conv_result
 
         return output.reshape((batch_size, self.out_channels, height_out, width_out))
 
@@ -162,17 +180,19 @@ class Convol2D(Module):
                 h_start = i * stride
                 w_start = j * stride
                 patch = x[:, :, h_start:h_start + kernel_size, w_start:w_start + kernel_size]
-                patches[:, :, i * width_out + j] = patch.reshape(batch_size, -1)
+
+                patch_size = in_channels * kernel_size * kernel_size
+                patches[:, :, i * width_out + j] = patch.reshape((batch_size, patch_size))
 
         return patches # (batch_size, in_channels * kernel_size * kernel_size, num_patches)
 
 
 class MaxPooling(Module):
     """Max pooling layer"""
-    def __init__(self, config: ModelConfig):
+    def __init__(self, kernel_size: int, stride: int = 2):
         super().__init__()
-        self.kernel_size = config.kernel_size
-        self.stride = config.stride
+        self.kernel_size = kernel_size
+        self.stride = stride
 
     def forward(self, x):
         """
@@ -187,14 +207,20 @@ class MaxPooling(Module):
         width_out = (width - self.kernel_size) // self.stride + 1
 
         output = Tensor.zeros((batch_size, in_channels, height_out, width_out))
+        output.requires_grad = x.requires_grad  # requires_grad from input
 
         for i in range(height_out):
             for j in range(width_out):
                 h_start = i * self.stride
                 w_start = j * self.stride
                 patch = x[:, :, h_start:h_start + self.kernel_size, w_start:w_start + self.kernel_size]
-                output[:, :, i, j] = patch.data.max(axis=(2, 3))
 
+                max_vals = patch.max(axis=(2, 3))
+                output[:, :, i, j] = max_vals.data  
+
+        output._prev = {x}
+        output._backward = lambda: setattr(x, 'grad', _add_gradients(x.grad, output.grad)) if output.grad else None
+        
         return output
 
 
@@ -218,14 +244,7 @@ class Flatten(Module):
         for dim in x.shape[1:]:  # Skip batch
             total_features *= dim
         
-        # Flatten each sample in the batch
-        flattened_data = []
-        for i in range(batch_size):
-            sample = x[i]  # Get individual sample
-            flat_sample = sample.flatten()  # Flatten the sample
-            flattened_data.append(flat_sample.data) # Append for each batch sample
-        
-        return Tensor(flattened_data, requires_grad=x.requires_grad)
+        return x.reshape((batch_size, total_features))
 
 
 class Linear(Module):
@@ -252,7 +271,7 @@ class Linear(Module):
         self.weights = Parameter(weight_data)
 
         bias_data = [rng.uniform(-0.1, 0.1) for _ in range(out_features)]
-        self.bias = Parameter(bias_data)
+        self.biases = Parameter(bias_data)
 
     def forward(self, x):
         """
@@ -267,66 +286,8 @@ class Linear(Module):
         
         output = x @ self.weights.transpose() # (batch_size, in_features) @ (in_features, out_features) -> (batch_size, out_features)
 
-        if self.bias:
-            output = output + self.bias
+        if self.bias and self.biases is not None:
+            for c in range(self.out_channels):
+                output[:, c] += self.biases[c]
 
         return output
-
-
-# Optimizer stuff #
-class Optimizer(ABC):
-    """Optimizer for the module"""
-
-    @abstractmethod
-    def __init__(self, module: Module, lr: float):
-        """Initialize the optimizer"""
-        self.module = module
-        self.lr = lr
-
-    @abstractmethod
-    def step(self):
-        """Update the weights"""
-        self.module.step(self.lr)
-
-    @abstractmethod
-    def zero_grad(self):
-        """Zero the gradients"""
-        self.module.zero_grad()
-    
-class SGD(Optimizer):
-    ...
-
-# Loss #
-class Loss(ABC):
-    """Interface for Loss Functions"""
-    @abstractmethod
-    def calLoss(self, target, pred):
-        """Calculate the loss"""
-
-    @abstractmethod
-    def grad(self, target, pred):
-        """Calculate the gradient of the loss"""
-
-
-# TODO: Replace later for more beautiful code
-class BinaryCrossEntropy(Loss):
-    def calLoss(self, target, pred):
-        if isinstance(pred, list):
-            pred = pred[0] # taking the value only
-        if isinstance(target, list):
-            target = target[0] # taking the value only
-        pred = min(max(pred, 1e-15), 1 - 1e-15)
-        J = target * math.log(pred) + (1 - target) * math.log(1 - pred)
-        return -J
-
-    # Use for gradient descent
-    def grad(self, target, pred):
-        if isinstance(pred, list):
-            pred = pred[0] # taking the value only
-        if isinstance(target, list):
-            target = target[0] # taking the value only
-        pred = min(max(pred, 1e-15), 1 - 1e-15)
-        return -(target / pred) + (1 - target) / (1 - pred) # formula, duh
-    
-
-# TODO: after eveything is done, make a init weights function

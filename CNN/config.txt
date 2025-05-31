@@ -1,0 +1,10 @@
+data_dir = data/reduced_mnist_png
+batch_size = 32
+epochs = 10
+learning_rate = 0.01
+optimizer_type = SGD
+loss_function = cross_entropy
+seed = 11
+image_type = jpg
+log_file = training_log.txt
+save_dir = saved

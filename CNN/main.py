@@ -115,7 +115,7 @@ def evaluate_model(model, dataloader, batch_size, criteria, num_batches=10):
 class MNISTPNGLoader:
     """MNIST dataloader that reads from organized directories"""
     
-    def __init__(self, data_dir: str, seed: int = 11, image_type: str = "png"):
+    def __init__(self, data_dir: str, seed: int = 11, image_type: str = "png", split: float = 0.9):
         self.data_dir = data_dir
         self.rng = SimpleRandom(seed=seed)
         self.image_type = image_type.lower()
@@ -125,6 +125,7 @@ class MNISTPNGLoader:
         self.val_labels = []
         self.test_images = []
         self.test_labels = []
+        self.split = split
         
     def load_mnist_data(self):
         temp_train_images = []
@@ -135,7 +136,7 @@ class MNISTPNGLoader:
             count = self._load_images_from_digit_folder(digit_path, digit, temp_train_images, temp_train_labels)
             print(f"Loaded digit {digit}: {count} training images")
         
-        # Split 90% train, 10% validation
+
         self._split_train_val(temp_train_images, temp_train_labels)
         
         for digit in range(10):
@@ -191,8 +192,7 @@ class MNISTPNGLoader:
             j = rng.rand() % len(combined)
             combined[i], combined[j] = combined[j], combined[i]
         
-        # Split: 90% train, 10% validation
-        split_idx = int(0.9 * len(combined))
+        split_idx = int(self.split * len(combined))
         
         train_data = combined[:split_idx]
         val_data = combined[split_idx:]
@@ -303,6 +303,8 @@ def training_pipeline(config):
     image_type = config.get("image_type", "png")
 
     save_dir = config.get("save_dir", "results")
+    train_val_split = config.get("train_val_split", 0.9)
+    train_val_split = float(train_val_split)
     
     # create if not exists
     if not os.path.exists(save_dir):
@@ -322,7 +324,7 @@ def training_pipeline(config):
         f.write(f"Configuration: {config}\n")
         f.write("=" * 50 + "\n\n")
 
-    dataloader = MNISTPNGLoader(data_dir, seed=seed, image_type=image_type)
+    dataloader = MNISTPNGLoader(data_dir, seed=seed, image_type=image_type, split=train_val_split)
     dataloader.load_mnist_data()
 
     model = CNN_Lite()

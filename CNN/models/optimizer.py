@@ -43,48 +43,6 @@ class SGD(Optimizer):
     
     def update_param(self, param: Parameter):
         """
-        Update a single parameter
-        
-        Args:
-            param (Parameter): Parameter to update
-        """
-        # In my code everything that doesn't need to be update is 0.0
-        if param.grad is None:
-            return
-        
-        def update_recursive(data, grad, indices=[]):
-            """Recursively update nested data structures"""
-            if isinstance(data, list) and isinstance(grad, list):
-                for i in range(len(data)):
-                    update_recursive(data, grad, indices + [i])
-            else:
-                # Get to the correct position
-                current = param.data
-                for idx in indices[:-1]:
-                    current = current[idx]
-                
-                if indices: 
-                    current[indices[-1]] -= self.lr * grad
-                else: 
-                    param.data -= self.lr * grad
-        
-        # Case param.data is a num
-        if not isinstance(param.data, list):
-            param.data -= self.lr * param.grad
-        else:
-            # Update in the correct place
-            self._update_nested(param.data, param.grad)
-    
-    def _update_nested(self, data, grad):
-        if isinstance(data, list) and isinstance(grad, list):
-            for i in range(len(data)):
-                self._update_nested(data[i], grad[i])
-        else:
-            # Update data
-            return data - self.lr * grad
-    
-    def update_param(self, param: Parameter):
-        """
         Updated version that properly modifies parameter data in place
         
         Args:

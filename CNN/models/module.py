@@ -147,7 +147,6 @@ class Convol2D(Module):
         # (out_channels, patch_size) @ (batch_size, patch_size, num_patches) -> (batch_size, out_channels, num_patches)
         conv_result = weights_2d @ patches
         
-        # Create bias tensor with proper broadcasting shape
         for c in range(self.out_channels):
             conv_result[:, c, :] += self.biases[c]
 
@@ -286,8 +285,8 @@ class Linear(Module):
         
         output = x @ self.weights.transpose() # (batch_size, in_features) @ (in_features, out_features) -> (batch_size, out_features)
 
-        if self.bias and self.biases is not None:
-            for c in range(self.out_channels):
-                output[:, c] += self.biases[c]
+        ones_batch = Tensor.ones((batch_size, 1))
+        bias_column = self.biases.reshape((1, self.out_features))
+        bias_broadcast = ones_batch @ bias_column
 
-        return output
+        return output + bias_broadcast

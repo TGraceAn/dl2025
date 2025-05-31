@@ -33,3 +33,5 @@ I did suffer a lot
 ### This was fun so I'll write here to continue when I'm bored.
 TODO: 
 	+ Add Regularization for SGD
+	+ Early stopping
+	+ Maybe AdamW
